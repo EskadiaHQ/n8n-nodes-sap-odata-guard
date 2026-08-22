@@ -394,10 +394,12 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 	assertIntegerRange(credentials.maxUrlLength, 'Maximum URL Length', 512, 32_768);
 	assertIntegerRange(credentials.maxResponseBytes, 'Maximum Response Size', 1024, 10_485_760);
 	assertIntegerRange(credentials.requestTimeout, 'Request Timeout', 1000, 300_000);
-	assertIntegerRange(credentials.aiToolMaxRows, 'AI Tool Maximum Rows', 1, 1000);
-	assertIntegerRange(credentials.aiToolMaxBytes, 'AI Tool Maximum Bytes', 1024, 5_242_880);
 	if (credentials.allowAiMetadata === true && credentials.allowAiTool !== true) {
 		throw new OperationalError('AI metadata discovery requires Allow AI Tool Use as well.');
+	}
+	if (credentials.allowAiTool === true) {
+		assertIntegerRange(credentials.aiToolMaxRows, 'AI Tool Maximum Rows', 1, 1000);
+		assertIntegerRange(credentials.aiToolMaxBytes, 'AI Tool Maximum Bytes', 1024, 5_242_880);
 	}
 	return policies;
 }

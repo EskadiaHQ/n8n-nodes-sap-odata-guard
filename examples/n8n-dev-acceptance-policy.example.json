@@ -1,0 +1,163 @@
+{
+  "/sap/opu/odata/sap/API_BUSINESS_PARTNER": {
+    "version": "v2",
+    "allowMetadata": true,
+    "entities": {
+      "A_BusinessPartner": {
+        "operations": ["get", "getMany"],
+        "fields": [
+          "BusinessPartner",
+          "Customer",
+          "Supplier",
+          "BusinessPartnerCategory",
+          "BusinessPartnerFullName",
+          "BusinessPartnerGrouping",
+          "CreationDate",
+          "LastChangeDate"
+        ],
+        "keyFields": { "BusinessPartner": "string" },
+        "filterFields": {
+          "BusinessPartner": "string",
+          "BusinessPartnerCategory": "string",
+          "BusinessPartnerGrouping": "string",
+          "CreationDate": "datetime"
+        },
+        "orderByFields": ["BusinessPartner", "CreationDate"],
+        "requiredFilters": []
+      }
+    }
+  },
+  "/sap/opu/odata/sap/API_PURCHASEORDER_PROCESS_SRV": {
+    "version": "v2",
+    "allowMetadata": true,
+    "entities": {
+      "A_PurchaseOrder": {
+        "operations": ["get", "getMany"],
+        "fields": [
+          "PurchaseOrder",
+          "CompanyCode",
+          "PurchaseOrderType",
+          "PurchasingProcessingStatus",
+          "CreatedByUser",
+          "CreationDate",
+          "Supplier",
+          "PurchasingOrganization",
+          "PurchasingGroup",
+          "PurchaseOrderDate",
+          "DocumentCurrency"
+        ],
+        "keyFields": { "PurchaseOrder": "string" },
+        "filterFields": {
+          "PurchaseOrder": "string",
+          "CompanyCode": "string",
+          "Supplier": "string",
+          "PurchasingOrganization": "string",
+          "CreationDate": "datetime"
+        },
+        "orderByFields": ["PurchaseOrder", "CreationDate", "PurchaseOrderDate"],
+        "requiredFilters": []
+      }
+    }
+  },
+  "/sap/opu/odata/sap/API_SALES_ORDER_SRV": {
+    "version": "v2",
+    "allowMetadata": true,
+    "entities": {
+      "A_SalesOrder": {
+        "operations": ["get", "getMany"],
+        "fields": [
+          "SalesOrder",
+          "SalesOrderType",
+          "SalesOrganization",
+          "DistributionChannel",
+          "OrganizationDivision",
+          "SoldToParty",
+          "CreationDate",
+          "SalesOrderDate",
+          "TotalNetAmount",
+          "TransactionCurrency",
+          "OverallSDProcessStatus"
+        ],
+        "keyFields": { "SalesOrder": "string" },
+        "filterFields": {
+          "SalesOrder": "string",
+          "SalesOrganization": "string",
+          "SoldToParty": "string",
+          "CreationDate": "datetime",
+          "TotalNetAmount": "number"
+        },
+        "orderByFields": ["SalesOrder", "CreationDate", "TotalNetAmount"],
+        "requiredFilters": []
+      }
+    }
+  },
+  "/sap/opu/odata/sap/API_BILLING_DOCUMENT_SRV": {
+    "version": "v2",
+    "allowMetadata": true,
+    "entities": {
+      "A_BillingDocument": {
+        "operations": ["get", "getMany"],
+        "fields": [
+          "BillingDocument",
+          "BillingDocumentCategory",
+          "BillingDocumentType",
+          "CreationDate",
+          "SalesOrganization",
+          "BillingDocumentDate",
+          "BillingDocumentIsCancelled",
+          "TotalNetAmount",
+          "TransactionCurrency",
+          "TaxAmount",
+          "TotalGrossAmount",
+          "PayerParty",
+          "CompanyCode",
+          "SoldToParty",
+          "OverallBillingStatus"
+        ],
+        "keyFields": { "BillingDocument": "string" },
+        "filterFields": {
+          "BillingDocument": "string",
+          "SalesOrganization": "string",
+          "PayerParty": "string",
+          "CompanyCode": "string",
+          "CreationDate": "datetime",
+          "BillingDocumentIsCancelled": "boolean",
+          "TotalNetAmount": "number"
+        },
+        "orderByFields": ["BillingDocument", "CreationDate", "BillingDocumentDate", "TotalNetAmount"],
+        "requiredFilters": []
+      }
+    }
+  },
+  "/sap/opu/odata/sap/API_PRODUCT_SRV": {
+    "version": "v2",
+    "allowMetadata": true,
+    "entities": {
+      "A_Product": {
+        "operations": ["get", "getMany"],
+        "fields": [
+          "Product",
+          "ProductType",
+          "CrossPlantStatus",
+          "CreationDate",
+          "IsMarkedForDeletion",
+          "GrossWeight",
+          "WeightUnit",
+          "ProductGroup",
+          "BaseUnit",
+          "Division"
+        ],
+        "keyFields": { "Product": "string" },
+        "filterFields": {
+          "Product": "string",
+          "ProductType": "string",
+          "ProductGroup": "string",
+          "CreationDate": "datetime",
+          "IsMarkedForDeletion": "boolean"
+        },
+        "orderByFields": ["Product", "CreationDate", "GrossWeight"],
+        "requiredFilters": []
+      }
+    }
+  }
+}

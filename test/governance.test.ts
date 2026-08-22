@@ -81,3 +81,14 @@ test('requires explicit opt-ins for private literals and HTTP', () => {
 		/metadata endpoints are never allowed/,
 	);
 });
+
+test('does not require hidden AI limits when AI Tool use is disabled', () => {
+	const normalCredential = credentials();
+	delete normalCredential.aiToolMaxRows;
+	delete normalCredential.aiToolMaxBytes;
+	assert.doesNotThrow(() => validateGovernanceConfiguration(normalCredential));
+	assert.throws(
+		() => validateGovernanceConfiguration({ ...normalCredential, allowAiTool: true }),
+		/AI Tool Maximum Rows/,
+	);
+});

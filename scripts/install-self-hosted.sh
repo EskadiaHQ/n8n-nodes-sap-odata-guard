@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PACKAGE_NAME=n8n-nodes-sap-odata-guard
-PACKAGE_VERSION=0.1.0
+PACKAGE_VERSION=0.1.1
 PACKAGE_FILE="${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz"
-EXPECTED_SHA256=e53ca90886d117ba67ab0d040dba0c4da9a0d59f099e2513b231e2e3cb7578b9
+EXPECTED_SHA256=5206d39754ef651ac874503fb0b5c10568c7edad8f4266b2ab647387d9a8bc60
 CONTAINER="${N8N_CONTAINER:-logali-n8n-restore-n8n-1}"
 PACKAGE_PATH="${1:-}"
 
@@ -58,8 +58,13 @@ if [ -e "$target" ]; then
     echo "$PACKAGE_NAME@$PACKAGE_VERSION ya estaba instalado"
     exit 0
   fi
-  echo "ERROR: actualización no prevista desde $PACKAGE_NAME@$installed" >&2
-  exit 1
+  case "$installed" in
+    0.1.0) ;;
+    *)
+      echo "ERROR: actualización no prevista desde $PACKAGE_NAME@$installed" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 stage=$(mktemp -d "/tmp/${PACKAGE_NAME}.XXXXXX")
@@ -106,6 +111,12 @@ data.dependencies[packageName] = `file:../packages/${packageFile}`;
 fs.writeFileSync(output, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o644 });
 NODE
 
+if [ -e "$target" ]; then
+  installed=$(node -p "require(\"$target/package.json\").version")
+  previous="$packages/${PACKAGE_NAME}-${installed}.pre-${PACKAGE_VERSION}-$stamp"
+  mv "$target" "$previous"
+fi
+
 mv "$target.new-$stamp" "$target"
 mv "$manifest.new-$stamp" "$manifest"
 
@@ -118,10 +129,11 @@ require(\"$target/dist/credentials/SapOdataGuardOAuth2Api.credentials.js\");
 "; then
   failed="$packages/${PACKAGE_NAME}-${PACKAGE_VERSION}.failed-$stamp"
   mv "$target" "$failed"
+  if [ -n "${previous:-}" ]; then mv "$previous" "$target"; fi
   cp "$manifest.pre-sap-odata-guard-$stamp" "$manifest"
   echo "ERROR: verificación posterior fallida; rollback aplicado" >&2
   exit 1
 fi
 
-echo "installed=$PACKAGE_NAME@$PACKAGE_VERSION manifest_backup=$manifest.pre-sap-odata-guard-$stamp"
+echo "installed=$PACKAGE_NAME@$PACKAGE_VERSION previous=${previous:-none} manifest_backup=$manifest.pre-sap-odata-guard-$stamp"
 '

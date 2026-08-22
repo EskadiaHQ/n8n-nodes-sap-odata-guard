@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [0.1.1] - 2026-08-22
+
+### Fixed
+
+- Accept normal read credentials when n8n omits the hidden AI Tool row and byte limits.
+- Continue to require both limits whenever AI Tool use is explicitly enabled.
+
 ## [0.1.0] - 2026-08-22
 
 ### Added

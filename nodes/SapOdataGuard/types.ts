@@ -35,8 +35,8 @@ export interface ODataGuardCredentials {
 	maxUrlLength: number;
 	maxResponseBytes: number;
 	requestTimeout: number;
-	aiToolMaxRows: number;
-	aiToolMaxBytes: number;
+	aiToolMaxRows?: number;
+	aiToolMaxBytes?: number;
 }
 
 export interface RequiredFilterPolicy {
