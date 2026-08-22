@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.1] - 2026-08-22
+
+### Changed
+
+- Replaced the generic shield with the branded Logali Guard family artwork and a legible OData `OD` badge.
+- Aligned the node and credential icons so OData Guard is recognizable in the selector, canvas, and credential screens.
+
 ## [0.2.0] - 2026-08-22
 
 ### Added

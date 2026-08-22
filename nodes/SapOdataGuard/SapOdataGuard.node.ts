@@ -97,8 +97,8 @@ export class SapOdataGuard implements INodeType {
 		displayName: 'Logali SAP OData Guard',
 		name: 'sapOdataGuard',
 		icon: {
-			light: 'file:sapOdataGuard.svg',
-			dark: 'file:sapOdataGuard.dark.svg',
+			light: 'file:sapOdataGuard-v021.svg',
+			dark: 'file:sapOdataGuard-v021.dark.svg',
 		},
 		group: ['input'],
 		version: 1,
