@@ -5,7 +5,7 @@ import { commonCredentialProperties } from './properties';
 export class SapOdataGuardApi implements ICredentialType {
 	name = 'sapOdataGuardApi';
 	displayName = 'Logali SAP OData Guard API';
-	icon = 'file:sapOdataGuardCredential.svg' as const;
+	icon = 'file:sapOdataGuardCredential-v022.svg' as const;
 	documentationUrl =
 		'https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard#credential-policy';
 	properties: INodeProperties[] = [
