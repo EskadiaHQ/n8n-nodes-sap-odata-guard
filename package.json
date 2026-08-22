@@ -1,0 +1,83 @@
+{
+	"name": "n8n-nodes-sap-odata-guard",
+	"version": "0.1.0",
+	"description": "Logali SAP OData Guard: governed, deny-by-default SAP OData reads for n8n",
+	"license": "MIT",
+	"homepage": "https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard#readme",
+	"keywords": [
+		"n8n-community-node-package",
+		"n8n",
+		"sap",
+		"odata",
+		"s4hana",
+		"security"
+	],
+	"author": {
+		"name": "Logali Group",
+		"email": "admin@logaligroup.com",
+		"url": "https://logaligroup.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard.git"
+	},
+	"bugs": {
+		"url": "https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard/issues"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"publishConfig": {
+		"access": "public",
+		"provenance": true,
+		"tag": "next"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"test": "tsx --test test/**/*.test.ts",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+	"files": [
+		"dist",
+		"examples",
+		"docs",
+		"CHANGELOG.md",
+		"LICENSE.md",
+		"README.md",
+		"ROADMAP.md",
+		"SECURITY.md"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": false,
+		"credentials": [
+			"dist/credentials/SapOdataGuardApi.credentials.js",
+			"dist/credentials/SapOdataGuardOAuth2Api.credentials.js"
+		],
+		"nodes": [
+			"dist/nodes/SapOdataGuard/SapOdataGuard.node.js"
+		]
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "0.44.5",
+		"eslint": "9.32.0",
+		"prettier": "3.6.2",
+		"release-it": "20.2.1",
+		"n8n-workflow": "2.14.1",
+		"tsx": "4.20.6",
+		"typescript": "5.9.2"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	},
+	"peerDependenciesMeta": {
+		"n8n-workflow": {
+			"optional": true
+		}
+	}
+}

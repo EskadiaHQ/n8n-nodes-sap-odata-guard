@@ -1,0 +1,13 @@
+{
+  "node": "n8n-nodes-sap-odata-guard.sapOdataGuard",
+  "nodeVersion": "1.0",
+  "codexVersion": "1.0",
+  "categories": ["Data & Storage"],
+  "resources": {
+    "primaryDocumentation": [
+      {
+        "url": "https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard#operations"
+      }
+    ]
+  }
+}

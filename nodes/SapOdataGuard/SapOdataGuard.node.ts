@@ -1,0 +1,591 @@
+import {
+	NodeConnectionTypes,
+	NodeOperationError,
+	OperationalError,
+	type ICredentialDataDecryptedObject,
+	type ICredentialTestFunctions,
+	type ICredentialsDecrypted,
+	type IDataObject,
+	type IExecuteFunctions,
+	type ILoadOptionsFunctions,
+	type INodeCredentialTestResult,
+	type INodeExecutionData,
+	type INodePropertyOptions,
+	type INodeType,
+	type INodeTypeDescription,
+} from 'n8n-workflow';
+
+import {
+	allowedEntitySetsFromMetadata,
+	buildEntityUrl,
+	projectItem,
+	requestCollection,
+	requestMetadata,
+	requestSingle,
+} from './client';
+import {
+	entityPolicyFor,
+	servicePolicyFor,
+	validateGovernanceConfiguration,
+} from './governance';
+import {
+	buildFilter,
+	buildKeyPredicate,
+	buildOrderBy,
+	normalizeUiFilters,
+	normalizeUiOrderBy,
+	selectedFieldsFromInput,
+} from './query';
+import { enforceAiToolByteLimit, resolveAiToolPolicy } from './toolPolicy';
+import type {
+	FilterLogic,
+	ODataGuardCredentials,
+	ODataHttpRequest,
+} from './types';
+
+function credentialName(authentication: string): string {
+	return authentication === 'oauth2' ? 'sapOdataGuardOAuth2Api' : 'sapOdataGuardApi';
+}
+
+function integerParameter(value: unknown, label: string, minimum: number, maximum: number): number {
+	const number = Number(value);
+	if (!Number.isInteger(number) || number < minimum || number > maximum) {
+		throw new OperationalError(`${label} must be an integer between ${minimum} and ${maximum}.`);
+	}
+	return number;
+}
+
+function metadataObject(
+	servicePath: string,
+	operation: string,
+	version: 'v2' | 'v4',
+	startedAt: number,
+	extra: IDataObject = {},
+): IDataObject {
+	return {
+		servicePath,
+		operation,
+		version,
+		durationMs: Date.now() - startedAt,
+		policyApplied: true,
+		...extra,
+	};
+}
+
+async function loadCredentials(
+	context: ILoadOptionsFunctions,
+): Promise<ODataGuardCredentials> {
+	const authentication = String(context.getCurrentNodeParameter('authentication') ?? 'basicOrNone');
+	return (await context.getCredentials(
+		credentialName(authentication),
+	)) as unknown as ODataGuardCredentials;
+}
+
+export class SapOdataGuard implements INodeType {
+	description: INodeTypeDescription = {
+		displayName: 'Logali SAP OData Guard',
+		name: 'sapOdataGuard',
+		icon: {
+			light: 'file:sapOdataGuard.svg',
+			dark: 'file:sapOdataGuard.dark.svg',
+		},
+		group: ['input'],
+		version: 1,
+		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
+		description: 'Read approved SAP OData V2/V4 data with deny-by-default guardrails',
+		usableAsTool: {
+			replacements: {
+				description:
+					'Give an AI agent bounded read-only access to explicitly approved SAP OData services, entities, and fields',
+			},
+		},
+		defaults: { name: 'Logali SAP OData Guard' },
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
+		credentials: [
+			{
+				name: 'sapOdataGuardApi',
+				required: true,
+				testedBy: 'sapOdataGuardConnectionTest',
+				displayOptions: { show: { authentication: ['basicOrNone'] } },
+			},
+			{
+				name: 'sapOdataGuardOAuth2Api',
+				required: true,
+				displayOptions: { show: { authentication: ['oauth2'] } },
+			},
+		],
+		properties: [
+			{
+				displayName: 'Authentication',
+				name: 'authentication',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{ name: 'Basic Auth / None', value: 'basicOrNone' },
+					{ name: 'OAuth2 Client Credentials', value: 'oauth2' },
+				],
+				default: 'basicOrNone',
+			},
+			{
+				displayName: 'Resource',
+				name: 'resource',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{ name: 'Connection', value: 'connection' },
+					{ name: 'Metadata', value: 'metadata' },
+					{ name: 'Entity', value: 'entity' },
+				],
+				default: 'connection',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['connection'] } },
+				options: [
+					{
+						name: 'Test Connection',
+						value: 'testConnection',
+						action: 'Test the governed SAP connection',
+						description: 'Fetch metadata internally for one approved service',
+					},
+				],
+				default: 'testConnection',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['metadata'] } },
+				options: [
+					{
+						name: 'Get Metadata',
+						value: 'getMetadata',
+						action: 'Get approved service metadata',
+					},
+					{
+						name: 'List Entity Sets',
+						value: 'listEntitySets',
+						action: 'List policy approved entity sets present in metadata',
+					},
+				],
+				default: 'listEntitySets',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['entity'] } },
+				options: [
+					{ name: 'Get', value: 'get', action: 'Get one approved entity by key' },
+					{ name: 'Get Many', value: 'getMany', action: 'Get approved entities' },
+				],
+				default: 'getMany',
+			},
+			{
+				displayName: 'Service Name or ID',
+				name: 'servicePath',
+				type: 'options',
+				typeOptions: { loadOptionsMethod: 'getAllowedServices' },
+				default: '',
+				description: 'Only service paths present in the selected credential policy are listed. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+				required: true,
+			},
+			{
+				displayName: 'Entity Set Name or ID',
+				name: 'entitySet',
+				type: 'options',
+				description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				typeOptions: { loadOptionsMethod: 'getAllowedEntities' },
+				default: '',
+				displayOptions: { show: { resource: ['entity'] } },
+				required: true,
+			},
+			{
+				displayName: 'Key JSON',
+				name: 'keyJson',
+				type: 'json',
+				default: '{}',
+				placeholder: '{"BusinessPartner":"1000000"}',
+				description: 'Exact structured key defined by the selected entity policy',
+				displayOptions: { show: { resource: ['entity'], operation: ['get'] } },
+				required: true,
+			},
+			{
+				displayName: 'Fields',
+				name: 'fields',
+				type: 'string',
+				default: '',
+				placeholder: 'BusinessPartner,BusinessPartnerFullName',
+				description:
+					'Comma-separated projection. Empty means every policy-approved field, never every server field.',
+				displayOptions: { show: { resource: ['entity'] } },
+			},
+			{
+				displayName: 'Filters',
+				name: 'filters',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				displayOptions: { show: { resource: ['entity'], operation: ['getMany'] } },
+				options: [
+					{
+						name: 'values',
+						displayName: 'Filter',
+						values: [
+							{ displayName: 'Field', name: 'field', type: 'string', default: '', required: true },
+							{
+								displayName: 'Operator',
+								name: 'operator',
+								type: 'options',
+								options: [
+									{ name: 'Contains', value: 'contains' },
+									{ name: 'Ends With', value: 'endsWith' },
+									{ name: 'Equals', value: 'eq' },
+									{ name: 'Greater Than', value: 'gt' },
+									{ name: 'Greater Than or Equal', value: 'ge' },
+									{ name: 'Less Than', value: 'lt' },
+									{ name: 'Less Than or Equal', value: 'le' },
+									{ name: 'Not Equals', value: 'ne' },
+									{ name: 'Starts With', value: 'startsWith' },
+								],
+								default: 'eq',
+							},
+							{ displayName: 'Value', name: 'value', type: 'string', default: '' },
+						],
+					},
+				],
+			},
+			{
+				displayName: 'Filter Logic',
+				name: 'filterLogic',
+				type: 'options',
+				options: [
+					{ name: 'AND', value: 'and' },
+					{ name: 'OR', value: 'or' },
+				],
+				default: 'and',
+				displayOptions: { show: { resource: ['entity'], operation: ['getMany'] } },
+			},
+			{
+				displayName: 'Order By',
+				name: 'orderBy',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				displayOptions: { show: { resource: ['entity'], operation: ['getMany'] } },
+				options: [
+					{
+						name: 'values',
+						displayName: 'Sort',
+						values: [
+							{ displayName: 'Field', name: 'field', type: 'string', default: '', required: true },
+							{
+								displayName: 'Direction',
+								name: 'direction',
+								type: 'options',
+								options: [
+									{ name: 'Ascending', value: 'asc' },
+									{ name: 'Descending', value: 'desc' },
+								],
+								default: 'asc',
+							},
+						],
+					},
+				],
+			},
+			{
+				displayName: 'Return All Within Credential Limit',
+				name: 'returnAll',
+				type: 'boolean',
+				description: 'Whether to return all results or only up to a given limit',
+				default: false,
+				displayOptions: { show: { resource: ['entity'], operation: ['getMany'] } },
+			},
+			{
+				displayName: 'Limit',
+				name: 'limit',
+				type: 'number',
+				description: 'Max number of results to return',
+				typeOptions: { minValue: 1, maxValue: 10000 },
+				default: 50,
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['getMany'], returnAll: [false] },
+				},
+			},
+			{
+				displayName: 'Page Size',
+				name: 'pageSize',
+				type: 'number',
+				typeOptions: { minValue: 1, maxValue: 1000 },
+				default: 100,
+				description: 'Requested $top per page; the SAP service may enforce a smaller page',
+				displayOptions: { show: { resource: ['entity'], operation: ['getMany'] } },
+			},
+			{
+				displayName: 'Include Governance Metadata',
+				name: 'includeMetadata',
+				type: 'boolean',
+				default: true,
+				displayOptions: { show: { resource: ['entity'] } },
+			},
+		],
+	};
+
+	methods = {
+		loadOptions: {
+			async getAllowedServices(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const credentials = await loadCredentials(this);
+				return [...validateGovernanceConfiguration(credentials).values()].map((service) => ({
+					name: `${service.path} (${service.version.toUpperCase()})`,
+					value: service.path,
+				}));
+			},
+			async getAllowedEntities(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const credentials = await loadCredentials(this);
+				const policies = validateGovernanceConfiguration(credentials);
+				const path = String(this.getCurrentNodeParameter('servicePath') ?? '');
+				if (!path) return [];
+				return [...servicePolicyFor(path, policies).entities.values()].map((entity) => ({
+					name: entity.name,
+					value: entity.name,
+					description: `Allowed operations: ${[...entity.operations].join(', ')}`,
+				}));
+			},
+		},
+		credentialTest: {
+			async sapOdataGuardConnectionTest(
+				this: ICredentialTestFunctions,
+				credential: ICredentialsDecrypted<ICredentialDataDecryptedObject>,
+			): Promise<INodeCredentialTestResult> {
+				try {
+					const credentials = credential.data as unknown as ODataGuardCredentials;
+					const policies = validateGovernanceConfiguration(credentials);
+					const service = policies.values().next().value;
+					if (!service) throw new OperationalError('No allowed service is configured.');
+					const request: ODataHttpRequest = async (options) =>
+						// ICredentialTestFunctions exposes the legacy request adapter in this SDK.
+						// eslint-disable-next-line @n8n/community-nodes/no-deprecated-workflow-functions
+						await this.helpers.request({
+							method: options.method,
+							uri: options.url,
+							headers: options.headers,
+							auth: options.auth,
+							json: options.json,
+							timeout: options.timeout,
+							rejectUnauthorized: !options.skipSslCertificateValidation,
+						});
+					await requestMetadata(request, credentials, service.path);
+					return { status: 'OK', message: `Connection successful for ${service.path}` };
+				} catch (error) {
+					return {
+						status: 'Error',
+						message: error instanceof Error ? error.message : String(error),
+					};
+				}
+			},
+		},
+	};
+
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+		const inputItems = this.getInputData();
+		const outputItems: INodeExecutionData[] = [];
+		for (let itemIndex = 0; itemIndex < inputItems.length; itemIndex += 1) {
+			try {
+				const authentication = this.getNodeParameter(
+					'authentication',
+					itemIndex,
+					'basicOrNone',
+				) as string;
+				const resource = this.getNodeParameter('resource', itemIndex) as string;
+				const operation = this.getNodeParameter('operation', itemIndex) as string;
+				const servicePath = this.getNodeParameter('servicePath', itemIndex) as string;
+				const credentials = (await this.getCredentials(
+					credentialName(authentication),
+					itemIndex,
+				)) as unknown as ODataGuardCredentials;
+				const policies = validateGovernanceConfiguration(credentials);
+				const service = servicePolicyFor(servicePath, policies);
+				const aiPolicy = resolveAiToolPolicy(this.getNode().type, resource, credentials);
+				const startedAt = Date.now();
+				const httpRequest: ODataHttpRequest =
+					authentication === 'oauth2'
+						? async (options) =>
+								await this.helpers.httpRequestWithAuthentication.call(
+									this,
+									'sapOdataGuardOAuth2Api',
+									options,
+								)
+						: async (options) => await this.helpers.httpRequest(options);
+
+				if (resource === 'connection') {
+					const result = await requestMetadata(httpRequest, credentials, service.path);
+					const json: IDataObject = {
+						connected: true,
+						metadataBytes: result.serializedBytes,
+						_odata: metadataObject(service.path, operation, service.version, startedAt),
+					};
+					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
+					outputItems.push({ json, pairedItem: { item: itemIndex } });
+					continue;
+				}
+
+				if (resource === 'metadata') {
+					if (!service.allowMetadata) {
+						throw new OperationalError(
+							`Metadata output is disabled by the policy for ${service.path}.`,
+						);
+					}
+					const result = await requestMetadata(httpRequest, credentials, service.path);
+					const json: IDataObject =
+						operation === 'getMetadata'
+							? {
+									metadataXml: result.xml,
+									_odata: metadataObject(
+										service.path,
+										operation,
+										service.version,
+										startedAt,
+										{ metadataBytes: result.serializedBytes },
+									),
+								}
+							: {
+									entitySets: allowedEntitySetsFromMetadata(result.xml, service.entities),
+									_odata: metadataObject(service.path, operation, service.version, startedAt),
+								};
+					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
+					outputItems.push({ json, pairedItem: { item: itemIndex } });
+					continue;
+				}
+
+				const entitySet = this.getNodeParameter('entitySet', itemIndex) as string;
+				const readOperation = operation === 'get' ? 'get' : 'getMany';
+				const entity = entityPolicyFor(service, entitySet, readOperation);
+				const fields = selectedFieldsFromInput(
+					this.getNodeParameter('fields', itemIndex, ''),
+					entity,
+				);
+				const includeMetadata = this.getNodeParameter(
+					'includeMetadata',
+					itemIndex,
+					true,
+				) as boolean;
+
+				if (readOperation === 'get') {
+					const key = buildKeyPredicate(
+						this.getNodeParameter('keyJson', itemIndex),
+						entity,
+						service.version,
+					);
+					const url = buildEntityUrl(credentials, service.path, entity.name, {
+						keyPredicate: key,
+						select: fields,
+					});
+					const result = await requestSingle(httpRequest, credentials, url);
+					const json = projectItem(result.item, fields);
+					if (includeMetadata) {
+						json._odata = metadataObject(service.path, operation, service.version, startedAt, {
+							entitySet: entity.name,
+							rowCount: 1,
+							responseBytes: result.serializedBytes,
+						});
+					}
+					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
+					outputItems.push({ json, pairedItem: { item: itemIndex } });
+					continue;
+				}
+
+				const filters = normalizeUiFilters(this.getNodeParameter('filters', itemIndex, {}));
+				const filterLogic = this.getNodeParameter(
+					'filterLogic',
+					itemIndex,
+					'and',
+				) as FilterLogic;
+				const orderByInput = normalizeUiOrderBy(
+					this.getNodeParameter('orderBy', itemIndex, {}),
+				);
+				const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
+				const requestedLimit = returnAll
+					? credentials.maxRows
+					: integerParameter(
+							this.getNodeParameter('limit', itemIndex, 100),
+							'Limit',
+							1,
+							10000,
+						);
+				const rowLimit = Math.min(
+					requestedLimit,
+					credentials.maxRows,
+					aiPolicy.maxRows ?? credentials.maxRows,
+				);
+				const pageSize = Math.min(
+					integerParameter(
+						this.getNodeParameter('pageSize', itemIndex, 100),
+						'Page Size',
+						1,
+						1000,
+					),
+					rowLimit,
+				);
+				const filter = buildFilter(filters, filterLogic, entity, service.version);
+				const orderBy = buildOrderBy(orderByInput, entity);
+				const initialUrl = buildEntityUrl(credentials, service.path, entity.name, {
+					select: fields,
+					filter,
+					orderBy,
+					top: pageSize,
+				});
+				const result = await requestCollection(
+					httpRequest,
+					credentials,
+					initialUrl,
+					initialUrl,
+					rowLimit,
+				);
+				const rows = result.items.map((item) => projectItem(item, fields));
+				const executionMetadata = metadataObject(
+					service.path,
+					operation,
+					service.version,
+					startedAt,
+					{
+						entitySet: entity.name,
+						rowCount: rows.length,
+						rowLimit,
+						pageCount: result.pageCount,
+						responseBytes: result.serializedBytes,
+						truncated: result.truncated,
+						requiredFilterCount: entity.requiredFilters.length,
+					},
+				);
+				if (includeMetadata) {
+					if (rows.length === 0) rows.push({ _odata: executionMetadata });
+					else rows[0]._odata = executionMetadata;
+				}
+				enforceAiToolByteLimit(rows, aiPolicy.maxBytes);
+				outputItems.push(
+					...rows.map((json) => ({ json, pairedItem: { item: itemIndex } })),
+				);
+			} catch (error) {
+				if (this.continueOnFail()) {
+					outputItems.push({
+						json: { error: error instanceof Error ? error.message : String(error) },
+						pairedItem: { item: itemIndex },
+					});
+					continue;
+				}
+				throw new NodeOperationError(
+					this.getNode(),
+					error instanceof Error ? error : new Error(String(error)),
+					{ itemIndex },
+				);
+			}
+		}
+		return [outputItems];
+	}
+}
