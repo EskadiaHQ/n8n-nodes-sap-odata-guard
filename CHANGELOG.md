@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.2] - 2026-08-22
+
+### Changed
+
+- Adopt the approved high-resolution Logali Guard family artwork for the OData node and both credentials.
+- Replace the earlier `OD` mark with a direct table/entity symbol that remains legible at canvas size.
+- Use a new versioned PNG asset without changing OData operations or governance policies.
+
 ## [0.2.1] - 2026-08-22
 
 ### Changed
