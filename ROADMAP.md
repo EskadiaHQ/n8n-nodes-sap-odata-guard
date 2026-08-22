@@ -10,10 +10,12 @@
 - Same-origin, same-collection and protected-query pagination validation.
 - Separate opt-in and tighter bounds for AI Tool use.
 - Unit, lint, build, package and runtime-load checks.
+- Real Basic Auth acceptance on n8n `2.33.5` and SAP OData V2 for five governed entity sets,
+  including a Get roundtrip and deny-by-default checks for an entity and a field.
 
 ## Required before stable release
 
-- Complete acceptance against each SAP OData version and n8n version claimed as supported.
+- Complete acceptance against SAP OData V4 and every additional n8n version claimed as supported.
 - Add controlled OAuth2 acceptance against an SAP/BTP identity provider.
 - Exercise server-driven V2 and V4 pagination with real continuation links.
 - Perform dependency, threat-model, secret-handling and recovery reviews.

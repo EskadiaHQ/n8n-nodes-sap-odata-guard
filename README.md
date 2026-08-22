@@ -2,7 +2,7 @@
 
 Security-first n8n community node for governed reads from SAP OData V2 and V4 services.
 
-> Status: early implementation `0.1.0` for non-production evaluation.
+> Status: prerelease `0.1.1` for controlled, non-production evaluation.
 
 ## Why Guard?
 
@@ -13,7 +13,7 @@ to the credential policy before it becomes usable.
 
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.1.0` implements connection checks, metadata, Get, and Get
+- **Implemented capability**: the `0.1.x` line implements connection checks, metadata, Get, and Get
   Many. Policy JSON cannot unlock writes, actions, batches, or triggers that do not exist in code.
 - **Credential authorization**: within those implemented reads, anything absent from the policy is
   denied by default.
@@ -42,7 +42,7 @@ arrangement for a real end-to-end acceptance test.
 - **Entity → Get Many**: performs bounded reads with selected fields, structured filters, sorting,
   and V2/V4 pagination.
 
-No write operation is present in `0.1.0`.
+No write operation is present in the `0.1.x` line.
 
 ## Credential policy
 
