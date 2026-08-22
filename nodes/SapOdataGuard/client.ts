@@ -19,6 +19,13 @@ function enforceUrlLength(url: string, maximum: number): void {
 	}
 }
 
+function serializeODataUrl(url: URL): string {
+	// URLSearchParams follows form encoding and serializes spaces as "+". OData
+	// expressions use URI query syntax, where whitespace must be percent-encoded.
+	// Literal plus signs are already encoded as %2B, so this replacement is safe.
+	return url.toString().replace(/\+/g, '%20');
+}
+
 function addSapContext(url: URL, credentials: ODataGuardCredentials): void {
 	if (credentials.sapClient) url.searchParams.set('sap-client', credentials.sapClient);
 	if (credentials.sapLanguage) url.searchParams.set('sap-language', credentials.sapLanguage);
@@ -42,7 +49,7 @@ export function buildMetadataUrl(
 ): string {
 	const url = new URL(`${serviceRootUrl(credentials, servicePath)}/$metadata`);
 	addSapContext(url, credentials);
-	const result = url.toString();
+	const result = serializeODataUrl(url);
 	enforceUrlLength(result, credentials.maxUrlLength);
 	return result;
 }
@@ -68,7 +75,7 @@ export function buildEntityUrl(
 	if (options.orderBy) url.searchParams.set('$orderby', options.orderBy);
 	if (options.top !== undefined) url.searchParams.set('$top', String(options.top));
 	addSapContext(url, credentials);
-	const result = url.toString();
+	const result = serializeODataUrl(url);
 	enforceUrlLength(result, credentials.maxUrlLength);
 	return result;
 }
@@ -82,7 +89,7 @@ export function buildMutationUrl(
 	const suffix = keyPredicate ? `${entitySet}(${keyPredicate})` : entitySet;
 	const url = new URL(`${serviceRootUrl(credentials, servicePath)}/${suffix}`);
 	addSapContext(url, credentials);
-	const result = url.toString();
+	const result = serializeODataUrl(url);
 	enforceUrlLength(result, credentials.maxUrlLength);
 	return result;
 }
@@ -152,7 +159,7 @@ export function resolveNextLink(
 		throw new OperationalError('The OData pagination $skip value must be a non-negative integer.');
 	}
 	addSapContext(resolved, credentials);
-	const result = resolved.toString();
+	const result = serializeODataUrl(resolved);
 	enforceUrlLength(result, credentials.maxUrlLength);
 	return result;
 }

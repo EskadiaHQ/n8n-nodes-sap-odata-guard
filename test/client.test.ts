@@ -62,6 +62,9 @@ test('preserves governed query parameters and rejects pagination tampering', () 
 		},
 	);
 	const path = new URL(governed).pathname;
+	assert.equal(governed.includes('+'), false);
+	assert.match(governed, /BusinessPartnerCategory%20eq%20%272%27/);
+	assert.match(governed, /BusinessPartner%20asc/);
 	const safe = resolveNextLink(
 		`https://sap.example.com${path}?$skiptoken=opaque`,
 		governed,
@@ -69,6 +72,7 @@ test('preserves governed query parameters and rejects pagination tampering', () 
 		creds,
 	);
 	const safeUrl = new URL(safe);
+	assert.equal(safe.includes('+'), false);
 	assert.equal(safeUrl.searchParams.get('$filter'), "BusinessPartnerCategory eq '2'");
 	assert.equal(safeUrl.searchParams.get('$select'), 'BusinessPartner');
 	assert.equal(safeUrl.searchParams.get('$top'), '50');

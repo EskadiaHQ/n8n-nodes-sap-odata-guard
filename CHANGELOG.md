@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.3] - 2026-08-22
+
+### Fixed
+
+- Encode whitespace in OData query expressions as `%20` instead of the form-style `+`, restoring compatibility with strict OData V4 parsers such as SAP CAP.
+- Preserve the same encoding when validating and following governed pagination links.
+
 ## [0.2.2] - 2026-08-22
 
 ### Changed
