@@ -1,0 +1,123 @@
+{
+  "name": "SAP OData Guard — Sales Order Write Roundtrip",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "4f708931-1da6-4997-b7c8-66c678e9f701",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "authentication": "basicOrNone",
+        "resource": "entity",
+        "operation": "create",
+        "servicePath": "/sap/opu/odata/sap/API_SALES_ORDER_SRV",
+        "entitySet": "A_SalesOrder",
+        "dataJson": "{\"SalesOrderType\":\"REPLACE\",\"SalesOrganization\":\"REPLACE\",\"DistributionChannel\":\"REPLACE\",\"OrganizationDivision\":\"REPLACE\",\"SoldToParty\":\"REPLACE\",\"PurchaseOrderByCustomer\":\"N8N-GUARD-TEST\",\"to_Item\":{\"results\":[{\"Material\":\"REPLACE\",\"RequestedQuantity\":\"1\",\"RequestedQuantityUnit\":\"PC\"}]}}",
+        "includeMetadata": true
+      },
+      "id": "2d92d044-05b1-427b-8bcf-0958787c7ea0",
+      "name": "Create Sales Order",
+      "type": "n8n-nodes-sap-odata-guard.sapOdataGuard",
+      "typeVersion": 1,
+      "position": [240, 0],
+      "credentials": {
+        "sapOdataGuardApi": {
+          "name": "REPLACE WITH A GOVERNED ODATA CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "basicOrNone",
+        "resource": "entity",
+        "operation": "update",
+        "servicePath": "/sap/opu/odata/sap/API_SALES_ORDER_SRV",
+        "entitySet": "A_SalesOrder",
+        "keyJson": "={{ { \"SalesOrder\": $json.SalesOrder } }}",
+        "dataJson": "{\"PurchaseOrderByCustomer\":\"N8N-GUARD-UPDATED\"}",
+        "ifMatch": "={{ $json._odata.etag }}",
+        "includeMetadata": true
+      },
+      "id": "764cafc8-4912-48c0-b6f6-27b1891e02dd",
+      "name": "Update Sales Order",
+      "type": "n8n-nodes-sap-odata-guard.sapOdataGuard",
+      "typeVersion": 1,
+      "position": [500, 0],
+      "credentials": {
+        "sapOdataGuardApi": {
+          "name": "REPLACE WITH A GOVERNED ODATA CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "basicOrNone",
+        "resource": "entity",
+        "operation": "get",
+        "servicePath": "/sap/opu/odata/sap/API_SALES_ORDER_SRV",
+        "entitySet": "A_SalesOrder",
+        "keyJson": "={{ { \"SalesOrder\": $json.SalesOrder } }}",
+        "fields": "SalesOrder,PurchaseOrderByCustomer",
+        "includeMetadata": true
+      },
+      "id": "bd82a439-f34c-426f-bfc9-34c4575556e3",
+      "name": "Verify Sales Order",
+      "type": "n8n-nodes-sap-odata-guard.sapOdataGuard",
+      "typeVersion": 1,
+      "position": [760, 0],
+      "credentials": {
+        "sapOdataGuardApi": {
+          "name": "REPLACE WITH A GOVERNED ODATA CREDENTIAL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "basicOrNone",
+        "resource": "entity",
+        "operation": "delete",
+        "servicePath": "/sap/opu/odata/sap/API_SALES_ORDER_SRV",
+        "entitySet": "A_SalesOrder",
+        "keyJson": "={{ { \"SalesOrder\": $json.SalesOrder } }}",
+        "ifMatch": "={{ $json._odata.etag }}",
+        "includeMetadata": true
+      },
+      "id": "1caaea04-1c66-4c99-a53b-bb6403bc2212",
+      "name": "Delete Sales Order",
+      "type": "n8n-nodes-sap-odata-guard.sapOdataGuard",
+      "typeVersion": 1,
+      "position": [1020, 0],
+      "credentials": {
+        "sapOdataGuardApi": {
+          "name": "REPLACE WITH A GOVERNED ODATA CREDENTIAL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Create Sales Order", "type": "main", "index": 0 }]]
+    },
+    "Create Sales Order": {
+      "main": [[{ "node": "Update Sales Order", "type": "main", "index": 0 }]]
+    },
+    "Update Sales Order": {
+      "main": [[{ "node": "Verify Sales Order", "type": "main", "index": 0 }]]
+    },
+    "Verify Sales Order": {
+      "main": [[{ "node": "Delete Sales Order", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

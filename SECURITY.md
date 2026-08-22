@@ -2,9 +2,9 @@
 
 ## Status
 
-Version `0.1.0` is an early implementation for non-production evaluation. It is read-only. Create,
-update, delete, function/action, batch, and webhook operations are not implemented and cannot be
-enabled through policy JSON.
+Version `0.2.0` is a prerelease for non-production evaluation. Create, Update, and Delete are
+implemented through OData only. Functions/actions, batch, and webhook operations are not
+implemented and cannot be enabled through policy JSON.
 
 ## Security model
 
@@ -21,7 +21,11 @@ Missing policy means denied. The node also:
 - projects every returned record to the allowed field list even if the server ignores `$select`;
 - applies required credential filters with `AND` outside caller-controlled filter logic;
 - limits rows, pages, URL length, serialized response bytes, and request duration;
-- keeps AI Tool use disabled by default and requires another opt-in for metadata;
+- validates create/update bodies against operation-specific field/type maps;
+- fetches CSRF and session cookies without emitting either value;
+- requires `If-Match` for update/delete and denies wildcard concurrency unless policy allows it;
+- limits serialized write bytes and total mutations per execution;
+- keeps AI Tool use disabled by default and requires separate opt-ins for metadata and writes;
 - redacts known credential secrets from request errors.
 
 ## Reporting

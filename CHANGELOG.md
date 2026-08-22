@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.0] - 2026-08-22
+
+### Added
+
+- Governed OData Create (`POST`), Update (`PATCH`), and Delete operations.
+- Operation-specific create/update field and type maps, required/nullable fields, and bounded nested payloads.
+- SAP CSRF token retrieval with matching session-cookie propagation.
+- Mandatory `If-Match` concurrency control with policy-owned wildcard permission.
+- Credential and AI-specific write-count limits plus write-request byte limits.
+- ETag extraction from Get and mutation responses.
+
 ## [0.1.1] - 2026-08-22
 
 ### Fixed

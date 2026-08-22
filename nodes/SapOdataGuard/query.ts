@@ -75,11 +75,10 @@ export function formatODataLiteral(
 	return version === 'v2' ? `datetimeoffset'${iso}'` : iso;
 }
 
-export function buildKeyPredicate(
+export function normalizeKeyValues(
 	keyJson: unknown,
 	policy: EntityPolicy,
-	version: ODataVersion,
-): string {
+): Record<string, unknown> {
 	let parsed: unknown;
 	try {
 		parsed = typeof keyJson === 'string' ? JSON.parse(keyJson) : keyJson;
@@ -94,7 +93,7 @@ export function buildKeyPredicate(
 	const values = parsed as Record<string, unknown>;
 	const expected = [...policy.keyFields.keys()];
 	if (expected.length === 0) {
-		throw new OperationalError(`Entity ${policy.name} has no key fields authorized for Get.`);
+		throw new OperationalError(`Entity ${policy.name} has no authorized key fields.`);
 	}
 	const actual = Object.keys(values);
 	const unknown = actual.filter((field) => !policy.keyFields.has(field));
@@ -104,6 +103,21 @@ export function buildKeyPredicate(
 	if (unknown.length > 0 || missing.length > 0 || actual.length !== expected.length) {
 		throw new OperationalError(`Key JSON must contain exactly: ${expected.join(', ')}.`);
 	}
+	for (const field of expected) {
+		const type = policy.keyFields.get(field);
+		if (!type) throw new OperationalError(`Missing key type for ${field}.`);
+		validateTypedValue(values[field], type, `Key JSON.${field}`);
+	}
+	return Object.fromEntries(expected.map((field) => [field, values[field]]));
+}
+
+export function buildKeyPredicate(
+	keyJson: unknown,
+	policy: EntityPolicy,
+	version: ODataVersion,
+): string {
+	const values = normalizeKeyValues(keyJson, policy);
+	const expected = [...policy.keyFields.keys()];
 	const parts = expected.map((field) => {
 		const type = policy.keyFields.get(field);
 		if (!type) throw new OperationalError(`Missing key type for ${field}.`);

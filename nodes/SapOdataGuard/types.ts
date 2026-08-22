@@ -2,7 +2,10 @@ import type { IDataObject, IHttpRequestOptions } from 'n8n-workflow';
 
 export type ODataVersion = 'v2' | 'v4';
 export type EntityReadOperation = 'get' | 'getMany';
+export type EntityWriteOperation = 'create' | 'update' | 'delete';
+export type EntityOperation = EntityReadOperation | EntityWriteOperation;
 export type ODataValueType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'guid';
+export type ODataWriteValueType = ODataValueType | 'object' | 'array';
 export type FilterOperator =
 	| 'eq'
 	| 'ne'
@@ -30,13 +33,17 @@ export interface ODataGuardCredentials {
 	rejectUnauthorized?: boolean;
 	allowAiTool?: boolean;
 	allowAiMetadata?: boolean;
+	allowAiWrites?: boolean;
 	maxRows: number;
 	maxPages: number;
 	maxUrlLength: number;
 	maxResponseBytes: number;
+	maxRequestBytes: number;
+	maxWrites: number;
 	requestTimeout: number;
 	aiToolMaxRows?: number;
 	aiToolMaxBytes?: number;
+	aiToolMaxWrites?: number;
 }
 
 export interface RequiredFilterPolicy {
@@ -47,12 +54,18 @@ export interface RequiredFilterPolicy {
 
 export interface EntityPolicy {
 	name: string;
-	operations: Set<EntityReadOperation>;
+	operations: Set<EntityOperation>;
 	fields: string[];
 	keyFields: Map<string, ODataValueType>;
 	filterFields: Map<string, ODataValueType>;
 	orderByFields: Set<string>;
 	requiredFilters: RequiredFilterPolicy[];
+	createFields: Map<string, ODataWriteValueType>;
+	updateFields: Map<string, ODataWriteValueType>;
+	requiredCreateFields: Set<string>;
+	nullableCreateFields: Set<string>;
+	nullableUpdateFields: Set<string>;
+	allowWildcardIfMatch: boolean;
 }
 
 export interface ServicePolicy {
@@ -103,6 +116,13 @@ export interface ODataExecutionMetadata extends IDataObject {
 	requiredFilterCount?: number;
 	durationMs: number;
 	policyApplied: true;
+}
+
+export interface ODataMutationResult {
+	item?: IDataObject;
+	statusCode: number;
+	serializedBytes: number;
+	etag?: string;
 }
 
 export type ODataHttpRequest = (options: IHttpRequestOptions) => Promise<unknown>;

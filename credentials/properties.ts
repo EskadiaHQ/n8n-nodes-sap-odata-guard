@@ -35,7 +35,7 @@ export const commonCredentialProperties: INodeProperties[] = [
 		placeholder:
 			'{"/sap/opu/odata/sap/API_BUSINESS_PARTNER":{"version":"v2","allowMetadata":false,"entities":{"A_BusinessPartner":{"operations":["getMany"],"fields":["BusinessPartner"],"keyFields":{},"filterFields":{"BusinessPartner":"string"},"orderByFields":["BusinessPartner"]}}}}',
 		description:
-			'Deny-by-default allowlist for service paths, protocol versions, entity sets, operations, fields, keys, filters, sorting, and required filters',
+			'Deny-by-default allowlist for service paths, protocol versions, entity sets, read/write operations, fields, keys, filters, sorting, and concurrency rules',
 		required: true,
 	},
 	{
@@ -93,6 +93,22 @@ export const commonCredentialProperties: INodeProperties[] = [
 		description: 'Cumulative serialized response limit per item',
 	},
 	{
+		displayName: 'Maximum Write Request Size (Bytes)',
+		name: 'maxRequestBytes',
+		type: 'number',
+		typeOptions: { minValue: 128, maxValue: 10485760 },
+		default: 1048576,
+		description: 'Maximum serialized OData create or update body per input item',
+	},
+	{
+		displayName: 'Maximum Writes Per Execution',
+		name: 'maxWrites',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 1000 },
+		default: 100,
+		description: 'Maximum number of create, update, or delete requests in one node execution',
+	},
+	{
 		displayName: 'Request Timeout (ms)',
 		name: 'requestTimeout',
 		type: 'number',
@@ -116,6 +132,15 @@ export const commonCredentialProperties: INodeProperties[] = [
 		displayOptions: { show: { allowAiTool: [true] } },
 	},
 	{
+		displayName: 'Allow AI Write Operations',
+		name: 'allowAiWrites',
+		type: 'boolean',
+		default: false,
+		description:
+			'Whether an AI Tool may execute policy-approved Create, Update, or Delete operations',
+		displayOptions: { show: { allowAiTool: [true] } },
+	},
+	{
 		displayName: 'AI Tool Maximum Rows',
 		name: 'aiToolMaxRows',
 		type: 'number',
@@ -132,5 +157,14 @@ export const commonCredentialProperties: INodeProperties[] = [
 		default: 262144,
 		description: 'Additional serialized-output cap applied to AI Tool executions',
 		displayOptions: { show: { allowAiTool: [true] } },
+	},
+	{
+		displayName: 'AI Tool Maximum Writes Per Execution',
+		name: 'aiToolMaxWrites',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 100 },
+		default: 1,
+		description: 'Additional write-count cap applied to AI Tool executions',
+		displayOptions: { show: { allowAiTool: [true], allowAiWrites: [true] } },
 	},
 ];

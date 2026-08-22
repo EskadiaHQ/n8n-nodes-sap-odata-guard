@@ -2,10 +2,13 @@ import { OperationalError } from 'n8n-workflow';
 
 import type {
 	EntityPolicy,
-	EntityReadOperation,
+	EntityOperation,
+	EntityWriteOperation,
 	FilterOperator,
 	ODataGuardCredentials,
 	ODataValueType,
+	ODataVersion,
+	ODataWriteValueType,
 	RequiredFilterPolicy,
 	ServicePolicies,
 	ServicePolicy,
@@ -21,6 +24,11 @@ const VALUE_TYPES = new Set<ODataValueType>([
 	'datetime',
 	'guid',
 ]);
+const WRITE_VALUE_TYPES = new Set<ODataWriteValueType>([
+	...VALUE_TYPES,
+	'object',
+	'array',
+]);
 const FILTER_OPERATORS = new Set<FilterOperator>([
 	'eq',
 	'ne',
@@ -32,10 +40,25 @@ const FILTER_OPERATORS = new Set<FilterOperator>([
 	'startsWith',
 	'endsWith',
 ]);
-const ENTITY_OPERATIONS = new Set<EntityReadOperation>(['get', 'getMany']);
+const ENTITY_OPERATIONS = new Set<EntityOperation>([
+	'get',
+	'getMany',
+	'create',
+	'update',
+	'delete',
+]);
 const MAX_SERVICES = 50;
 const MAX_ENTITIES_PER_SERVICE = 200;
 const MAX_FIELDS_PER_POLICY = 500;
+const MAX_WRITE_DEPTH = 12;
+const MAX_WRITE_MEMBERS = 5000;
+
+function containsControlCharacter(value: string): boolean {
+	return [...value].some((character) => {
+		const code = character.charCodeAt(0);
+		return code <= 31 || code === 127;
+	});
+}
 
 function recordValue(value: unknown, label: string): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -118,6 +141,33 @@ function parseFieldTypeMap(value: unknown, label: string): Map<string, ODataValu
 	return result;
 }
 
+function parseWriteValueType(value: unknown, label: string): ODataWriteValueType {
+	if (typeof value !== 'string' || !WRITE_VALUE_TYPES.has(value as ODataWriteValueType)) {
+		throw new OperationalError(
+			`${label} must be one of string, number, boolean, date, datetime, guid, object, or array.`,
+		);
+	}
+	return value as ODataWriteValueType;
+}
+
+function parseWriteFieldTypeMap(
+	value: unknown,
+	label: string,
+): Map<string, ODataWriteValueType> {
+	if (value === undefined) return new Map();
+	const record = recordValue(value, label);
+	if (Object.keys(record).length > MAX_FIELDS_PER_POLICY) {
+		throw new OperationalError(`${label} exceeds ${MAX_FIELDS_PER_POLICY} entries.`);
+	}
+	const result = new Map<string, ODataWriteValueType>();
+	for (const [field, type] of Object.entries(record)) {
+		assertSafeObjectKey(field, label);
+		const normalizedField = assertIdentifier(field, `${label} field`);
+		result.set(normalizedField, parseWriteValueType(type, `${label}.${normalizedField}`));
+	}
+	return result;
+}
+
 function parseFieldList(value: unknown, label: string, required = false): string[] {
 	if (value === undefined && !required) return [];
 	if (!Array.isArray(value) || (required && value.length === 0)) {
@@ -131,16 +181,18 @@ function parseFieldList(value: unknown, label: string, required = false): string
 	return [...unique];
 }
 
-function parseOperations(value: unknown, label: string): Set<EntityReadOperation> {
+function parseOperations(value: unknown, label: string): Set<EntityOperation> {
 	if (!Array.isArray(value) || value.length === 0) {
-		throw new OperationalError(`${label} must contain get and/or getMany.`);
+		throw new OperationalError(
+			`${label} must contain one or more of get, getMany, create, update, or delete.`,
+		);
 	}
-	const result = new Set<EntityReadOperation>();
+	const result = new Set<EntityOperation>();
 	for (const operation of value) {
-		if (typeof operation !== 'string' || !ENTITY_OPERATIONS.has(operation as EntityReadOperation)) {
+		if (typeof operation !== 'string' || !ENTITY_OPERATIONS.has(operation as EntityOperation)) {
 			throw new OperationalError(`${label} contains an unsupported operation.`);
 		}
-		result.add(operation as EntityReadOperation);
+		result.add(operation as EntityOperation);
 	}
 	return result;
 }
@@ -211,8 +263,19 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 	const fields = parseFieldList(entity.fields, `${label}.fields`, true);
 	const keyFields = parseFieldTypeMap(entity.keyFields, `${label}.keyFields`);
 	const filterFields = parseFieldTypeMap(entity.filterFields, `${label}.filterFields`);
+	const createFields = parseWriteFieldTypeMap(entity.createFields, `${label}.createFields`);
+	const updateFields = parseWriteFieldTypeMap(entity.updateFields, `${label}.updateFields`);
 	const operations = parseOperations(entity.operations, `${label}.operations`);
 	const orderByFields = new Set(parseFieldList(entity.orderByFields, `${label}.orderByFields`));
+	const requiredCreateFields = new Set(
+		parseFieldList(entity.requiredCreateFields, `${label}.requiredCreateFields`),
+	);
+	const nullableCreateFields = new Set(
+		parseFieldList(entity.nullableCreateFields, `${label}.nullableCreateFields`),
+	);
+	const nullableUpdateFields = new Set(
+		parseFieldList(entity.nullableUpdateFields, `${label}.nullableUpdateFields`),
+	);
 	for (const field of orderByFields) {
 		if (!fields.includes(field)) {
 			throw new OperationalError(`${label}.orderByFields contains ${field}, which is not an output field.`);
@@ -223,13 +286,45 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 		filterFields,
 		`${label}.requiredFilters`,
 	);
-	if (operations.has('get') && keyFields.size === 0) {
-		throw new OperationalError(`${label} must define keyFields before Get can be allowed.`);
-	}
-	if (operations.has('get') && requiredFilters.length > 0) {
+	if (['get', 'update', 'delete'].some((operation) => operations.has(operation as EntityOperation)) && keyFields.size === 0) {
 		throw new OperationalError(
-			`${label} cannot allow Get together with requiredFilters because a direct key lookup cannot enforce row filters. Use Get Many with a key filter instead.`,
+			`${label} must define keyFields before Get, Update, or Delete can be allowed.`,
 		);
+	}
+	if (
+		['get', 'update', 'delete'].some((operation) => operations.has(operation as EntityOperation)) &&
+		requiredFilters.length > 0
+	) {
+		throw new OperationalError(
+			`${label} cannot allow Get, Update, or Delete together with requiredFilters because a direct key URL cannot enforce row filters. Use Get Many with a key filter for scoped reads and a separate write policy.`,
+		);
+	}
+	if (operations.has('create') && createFields.size === 0) {
+		throw new OperationalError(`${label} must define createFields before Create can be allowed.`);
+	}
+	if (operations.has('update') && updateFields.size === 0) {
+		throw new OperationalError(`${label} must define updateFields before Update can be allowed.`);
+	}
+	for (const field of requiredCreateFields) {
+		if (!createFields.has(field)) {
+			throw new OperationalError(
+				`${label}.requiredCreateFields contains ${field}, which is absent from createFields.`,
+			);
+		}
+	}
+	for (const field of nullableCreateFields) {
+		if (!createFields.has(field)) {
+			throw new OperationalError(
+				`${label}.nullableCreateFields contains ${field}, which is absent from createFields.`,
+			);
+		}
+	}
+	for (const field of nullableUpdateFields) {
+		if (!updateFields.has(field)) {
+			throw new OperationalError(
+				`${label}.nullableUpdateFields contains ${field}, which is absent from updateFields.`,
+			);
+		}
 	}
 	return {
 		name,
@@ -239,6 +334,12 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 		filterFields,
 		orderByFields,
 		requiredFilters,
+		createFields,
+		updateFields,
+		requiredCreateFields,
+		nullableCreateFields,
+		nullableUpdateFields,
+		allowWildcardIfMatch: entity.allowWildcardIfMatch === true,
 	};
 }
 
@@ -307,7 +408,7 @@ export function servicePolicyFor(path: string, policies: ServicePolicies): Servi
 export function entityPolicyFor(
 	service: ServicePolicy,
 	entityName: string,
-	operation: EntityReadOperation,
+	operation: EntityOperation,
 ): EntityPolicy {
 	const normalized = assertIdentifier(entityName, 'Entity Set');
 	const entity = service.entities.get(normalized);
@@ -322,6 +423,157 @@ export function entityPolicyFor(
 		);
 	}
 	return entity;
+}
+
+function safeNestedWriteValue(
+	value: unknown,
+	label: string,
+	depth: number,
+	memberCount: { value: number },
+): void {
+	if (depth > MAX_WRITE_DEPTH) {
+		throw new OperationalError(`${label} exceeds the maximum nested write depth.`);
+	}
+	if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return;
+	if (Array.isArray(value)) {
+		memberCount.value += value.length;
+		if (memberCount.value > MAX_WRITE_MEMBERS) {
+			throw new OperationalError(`Write payload exceeds ${MAX_WRITE_MEMBERS} nested members.`);
+		}
+		value.forEach((entry, index) =>
+			safeNestedWriteValue(entry, `${label}[${index}]`, depth + 1, memberCount),
+		);
+		return;
+	}
+	if (!value || typeof value !== 'object') {
+		throw new OperationalError(`${label} contains a non-JSON value.`);
+	}
+	const entries = Object.entries(value as Record<string, unknown>);
+	memberCount.value += entries.length;
+	if (memberCount.value > MAX_WRITE_MEMBERS) {
+		throw new OperationalError(`Write payload exceeds ${MAX_WRITE_MEMBERS} nested members.`);
+	}
+	for (const [key, nestedValue] of entries) {
+		assertSafeObjectKey(key, label);
+		if (
+			key === '__metadata' ||
+			key.length === 0 ||
+			key.length > 128 ||
+			containsControlCharacter(key)
+		) {
+			throw new OperationalError(`${label} contains an unsafe nested property name.`);
+		}
+		safeNestedWriteValue(nestedValue, `${label}.${key}`, depth + 1, memberCount);
+	}
+}
+
+function normalizeWriteValue(
+	value: unknown,
+	type: ODataWriteValueType,
+	version: ODataVersion,
+): unknown {
+	if (value === null) return null;
+	if (type === 'datetime' && version === 'v2' && typeof value === 'string') {
+		return `/Date(${Date.parse(value)})/`;
+	}
+	if (type === 'boolean' && typeof value === 'string') return value === 'true';
+	return value;
+}
+
+export function validateWritePayload(
+	value: unknown,
+	entity: EntityPolicy,
+	operation: Exclude<EntityWriteOperation, 'delete'>,
+	version: ODataVersion,
+	maxRequestBytes: number,
+): Record<string, unknown> {
+	let parsed = value;
+	if (typeof value === 'string') {
+		try {
+			parsed = JSON.parse(value);
+		} catch {
+			// This is local input validation, not an API failure.
+			// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+			throw new OperationalError('Data JSON must be valid JSON.');
+		}
+	}
+	const body = recordValue(parsed, 'Data JSON');
+	const entries = Object.entries(body);
+	if (entries.length === 0) throw new OperationalError('Data JSON must contain at least one field.');
+	const allowedFields = operation === 'create' ? entity.createFields : entity.updateFields;
+	const nullableFields =
+		operation === 'create' ? entity.nullableCreateFields : entity.nullableUpdateFields;
+	if (operation === 'create') {
+		for (const required of entity.requiredCreateFields) {
+			if (!Object.prototype.hasOwnProperty.call(body, required)) {
+				throw new OperationalError(`Create requires field ${required}.`);
+			}
+		}
+	}
+	const normalized: Record<string, unknown> = {};
+	const memberCount = { value: entries.length };
+	for (const [rawField, fieldValue] of entries) {
+		assertSafeObjectKey(rawField, 'Data JSON');
+		const field = assertIdentifier(rawField, 'Data JSON field');
+		const type = allowedFields.get(field);
+		if (!type) {
+			throw new OperationalError(`Field ${field} is not allowed for ${operation} on ${entity.name}.`);
+		}
+		if (fieldValue === null) {
+			if (!nullableFields.has(field)) {
+				throw new OperationalError(`Field ${field} is not nullable for ${operation} on ${entity.name}.`);
+			}
+			normalized[field] = null;
+			continue;
+		}
+		if (type === 'object') {
+			if (!fieldValue || typeof fieldValue !== 'object' || Array.isArray(fieldValue)) {
+				throw new OperationalError(`Data JSON.${field} must be an object.`);
+			}
+			safeNestedWriteValue(fieldValue, `Data JSON.${field}`, 1, memberCount);
+		} else if (type === 'array') {
+			if (!Array.isArray(fieldValue)) {
+				throw new OperationalError(`Data JSON.${field} must be an array.`);
+			}
+			safeNestedWriteValue(fieldValue, `Data JSON.${field}`, 1, memberCount);
+		} else {
+			validateTypedValue(fieldValue, type, `Data JSON.${field}`);
+		}
+		normalized[field] = normalizeWriteValue(fieldValue, type, version);
+	}
+	let serialized: string;
+	try {
+		serialized = JSON.stringify(normalized);
+	} catch {
+		// This is local input validation, not an API failure.
+		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+		throw new OperationalError('Data JSON must be serializable JSON.');
+	}
+	const bytes = Buffer.byteLength(serialized, 'utf8');
+	if (bytes > maxRequestBytes) {
+		throw new OperationalError(
+			`Write payload is ${bytes} bytes, above the credential limit of ${maxRequestBytes}.`,
+		);
+	}
+	return normalized;
+}
+
+export function validateIfMatch(value: unknown, entity: EntityPolicy): string {
+	const ifMatch = String(value ?? '').trim();
+	if (!ifMatch) {
+		throw new OperationalError(
+			'Update and Delete require If-Match. Provide the current ETag, or explicitly allow * in the credential policy.',
+		);
+	}
+	if (ifMatch.length > 1024 || containsControlCharacter(ifMatch)) {
+		throw new OperationalError('If-Match contains an invalid or oversized header value.');
+	}
+	if (ifMatch === '*' && !entity.allowWildcardIfMatch) {
+		throw new OperationalError(
+			`Wildcard If-Match is not allowed for ${entity.name}; provide the exact current ETag.`,
+		);
+	}
+	return ifMatch;
 }
 
 export function normalizeHost(
@@ -374,6 +626,8 @@ function assertIntegerRange(value: unknown, label: string, minimum: number, maxi
 }
 
 export function validateGovernanceConfiguration(credentials: ODataGuardCredentials): ServicePolicies {
+	credentials.maxRequestBytes ??= 1_048_576;
+	credentials.maxWrites ??= 100;
 	normalizeHost(
 		credentials.host,
 		credentials.allowInsecureHttp === true,
@@ -393,6 +647,8 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 	assertIntegerRange(credentials.maxPages, 'Maximum Pages', 1, 100);
 	assertIntegerRange(credentials.maxUrlLength, 'Maximum URL Length', 512, 32_768);
 	assertIntegerRange(credentials.maxResponseBytes, 'Maximum Response Size', 1024, 10_485_760);
+	assertIntegerRange(credentials.maxRequestBytes, 'Maximum Write Request Size', 128, 10_485_760);
+	assertIntegerRange(credentials.maxWrites, 'Maximum Writes', 1, 1000);
 	assertIntegerRange(credentials.requestTimeout, 'Request Timeout', 1000, 300_000);
 	if (credentials.allowAiMetadata === true && credentials.allowAiTool !== true) {
 		throw new OperationalError('AI metadata discovery requires Allow AI Tool Use as well.');
@@ -400,6 +656,11 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 	if (credentials.allowAiTool === true) {
 		assertIntegerRange(credentials.aiToolMaxRows, 'AI Tool Maximum Rows', 1, 1000);
 		assertIntegerRange(credentials.aiToolMaxBytes, 'AI Tool Maximum Bytes', 1024, 5_242_880);
+		if (credentials.allowAiWrites === true) {
+			assertIntegerRange(credentials.aiToolMaxWrites, 'AI Tool Maximum Writes', 1, 100);
+		}
+	} else if (credentials.allowAiWrites === true) {
+		throw new OperationalError('AI write operations require Allow AI Tool Use as well.');
 	}
 	return policies;
 }

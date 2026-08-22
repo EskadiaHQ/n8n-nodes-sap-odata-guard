@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PACKAGE_NAME=n8n-nodes-sap-odata-guard
-PACKAGE_VERSION=0.1.1
+PACKAGE_VERSION=0.2.0
 PACKAGE_FILE="${PACKAGE_NAME}-${PACKAGE_VERSION}.tgz"
-EXPECTED_SHA256=5206d39754ef651ac874503fb0b5c10568c7edad8f4266b2ab647387d9a8bc60
+EXPECTED_SHA256=8b41013f385fe381f63b2154c0288ffe532a39426631e9888e0d5974bfd02056
 CONTAINER="${N8N_CONTAINER:-logali-n8n-restore-n8n-1}"
 PACKAGE_PATH="${1:-}"
 
@@ -59,7 +59,7 @@ if [ -e "$target" ]; then
     exit 0
   fi
   case "$installed" in
-    0.1.0) ;;
+    0.1.0|0.1.1) ;;
     *)
       echo "ERROR: actualización no prevista desde $PACKAGE_NAME@$installed" >&2
       exit 1

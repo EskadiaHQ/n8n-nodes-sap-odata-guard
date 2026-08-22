@@ -8,6 +8,7 @@ export interface AiToolPolicy {
 	isTool: boolean;
 	maxRows?: number;
 	maxBytes?: number;
+	maxWrites?: number;
 }
 
 export function isODataGuardAiToolNode(nodeType: string): boolean {
@@ -17,21 +18,28 @@ export function isODataGuardAiToolNode(nodeType: string): boolean {
 export function resolveAiToolPolicy(
 	nodeType: string,
 	resource: string,
+	operation: string,
 	credentials: ODataGuardCredentials,
 ): AiToolPolicy {
 	if (!isODataGuardAiToolNode(nodeType)) return { isTool: false };
 	if (credentials.allowAiTool !== true) {
 		throw new OperationalError(
-			'AI Tool use is disabled in the selected credential. Enable it only for governed reads.',
+			'AI Tool use is disabled in the selected credential. Enable it only for governed OData access.',
 		);
 	}
 	if (resource === 'metadata' && credentials.allowAiMetadata !== true) {
 		throw new OperationalError('AI metadata discovery requires its separate credential opt-in.');
 	}
+	if (['create', 'update', 'delete'].includes(operation) && credentials.allowAiWrites !== true) {
+		throw new OperationalError('AI write operations require their separate credential opt-in.');
+	}
 	return {
 		isTool: true,
 		maxRows: credentials.aiToolMaxRows,
 		maxBytes: credentials.aiToolMaxBytes,
+		...(credentials.allowAiWrites === true
+			? { maxWrites: credentials.aiToolMaxWrites }
+			: {}),
 	};
 }
 

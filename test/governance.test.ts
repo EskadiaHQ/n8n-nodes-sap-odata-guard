@@ -7,6 +7,8 @@ import {
 	parseServicePolicies,
 	servicePolicyFor,
 	validateGovernanceConfiguration,
+	validateIfMatch,
+	validateWritePayload,
 } from '../nodes/SapOdataGuard/governance';
 import { credentials, policyObject } from './fixtures';
 
@@ -86,9 +88,105 @@ test('does not require hidden AI limits when AI Tool use is disabled', () => {
 	const normalCredential = credentials();
 	delete normalCredential.aiToolMaxRows;
 	delete normalCredential.aiToolMaxBytes;
+	delete (normalCredential as { maxRequestBytes?: number }).maxRequestBytes;
+	delete (normalCredential as { maxWrites?: number }).maxWrites;
 	assert.doesNotThrow(() => validateGovernanceConfiguration(normalCredential));
+	assert.equal(normalCredential.maxRequestBytes, 1048576);
+	assert.equal(normalCredential.maxWrites, 100);
 	assert.throws(
 		() => validateGovernanceConfiguration({ ...normalCredential, allowAiTool: true }),
 		/AI Tool Maximum Rows/,
+	);
+});
+
+test('parses explicit Create, Update, and Delete policy without granting other fields', () => {
+	const writePolicy = {
+		'/service': {
+			version: 'v2',
+			entities: {
+				Things: {
+					operations: ['get', 'create', 'update', 'delete'],
+					fields: ['ID', 'Name', 'ChangedAt'],
+					keyFields: { ID: 'string' },
+					filterFields: {},
+					orderByFields: [],
+					createFields: { Name: 'string', ChangedAt: 'datetime', Details: 'object' },
+					updateFields: { Name: 'string', ChangedAt: 'datetime' },
+					requiredCreateFields: ['Name'],
+					nullableUpdateFields: ['Name'],
+					allowWildcardIfMatch: true,
+				},
+			},
+		},
+	};
+	const service = servicePolicyFor('/service', parseServicePolicies(JSON.stringify(writePolicy)));
+	const entity = entityPolicyFor(service, 'Things', 'create');
+	assert.deepEqual(
+		validateWritePayload(
+			{
+				Name: 'Controlled',
+				ChangedAt: '2026-08-22T12:00:00Z',
+				Details: { results: [{ Code: 'A' }] },
+			},
+			entity,
+			'create',
+			'v2',
+			4096,
+		),
+		{
+			Name: 'Controlled',
+			ChangedAt: '/Date(1787400000000)/',
+			Details: { results: [{ Code: 'A' }] },
+		},
+	);
+	assert.throws(
+		() => validateWritePayload({ Name: 'x', Secret: 'no' }, entity, 'create', 'v2', 4096),
+		/Secret is not allowed/,
+	);
+	assert.throws(
+		() => validateWritePayload({ ChangedAt: '2026-08-22T12:00:00Z' }, entity, 'create', 'v2', 4096),
+		/requires field Name/,
+	);
+	assert.equal(validateIfMatch('*', entity), '*');
+});
+
+test('write policies require keys, field maps, safe payloads, and explicit wildcard ETags', () => {
+	const invalid = {
+		'/service': {
+			version: 'v4',
+			entities: {
+				Things: {
+					operations: ['update'],
+					fields: ['ID'],
+					keyFields: {},
+					filterFields: {},
+					orderByFields: [],
+					updateFields: {},
+				},
+			},
+		},
+	};
+	assert.throws(() => parseServicePolicies(JSON.stringify(invalid)), /must define keyFields/);
+
+	const allowed = structuredClone(invalid);
+	allowed['/service'].entities.Things.keyFields = { ID: 'string' } as never;
+	allowed['/service'].entities.Things.updateFields = { Name: 'string' } as never;
+	const entity = entityPolicyFor(
+		servicePolicyFor('/service', parseServicePolicies(JSON.stringify(allowed))),
+		'Things',
+		'update',
+	);
+	assert.throws(() => validateIfMatch('*', entity), /Wildcard If-Match is not allowed/);
+	assert.throws(() => validateIfMatch('bad\r\nheader', entity), /invalid/);
+	assert.throws(
+		() =>
+			validateWritePayload(
+				{ Name: 'x'.repeat(500) },
+				entity,
+				'update',
+				'v4',
+				128,
+			),
+		/above the credential limit/,
 	);
 });

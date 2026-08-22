@@ -4,9 +4,11 @@ import test from 'node:test';
 import {
 	allowedEntitySetsFromMetadata,
 	buildEntityUrl,
+	buildMutationUrl,
 	parseODataPage,
 	projectItem,
 	requestCollection,
+	requestMutation,
 	requestSingle,
 	resolveNextLink,
 } from '../nodes/SapOdataGuard/client';
@@ -152,5 +154,121 @@ test('redacts Basic and OAuth secrets from request errors', async () => {
 			assert.match(error.message, /\[REDACTED\]/);
 			return true;
 		},
+	);
+});
+
+test('fetches a CSRF token and session cookies before a governed Create', async () => {
+	const creds = credentials();
+	const calls: Array<Record<string, unknown>> = [];
+	const result = await requestMutation(
+		async (options) => {
+			calls.push(options as unknown as Record<string, unknown>);
+			if (calls.length === 1) {
+				return {
+					statusCode: 200,
+					headers: {
+						'x-csrf-token': 'csrf-token-value',
+						'set-cookie': ['SAP_SESSIONID=abc; Path=/; HttpOnly', 'sap-usercontext=client=250; Path=/'],
+					},
+					body: '{}',
+				};
+			}
+			return {
+				statusCode: 201,
+				headers: { etag: 'W/"created"' },
+				body: JSON.stringify({ d: { ID: '1', Name: 'Created' } }),
+			};
+		},
+		creds,
+		'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+		'POST',
+		buildMutationUrl(
+			creds,
+			'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+			'A_BusinessPartner',
+		),
+		{ Name: 'Created' },
+	);
+	assert.equal(calls.length, 2);
+	assert.equal(calls[0].method, 'GET');
+	assert.equal((calls[0].headers as Record<string, string>)['X-CSRF-Token'], 'Fetch');
+	assert.equal(calls[0].returnFullResponse, true);
+	assert.equal(calls[1].method, 'POST');
+	assert.equal((calls[1].headers as Record<string, string>)['X-CSRF-Token'], 'csrf-token-value');
+	assert.equal(
+		(calls[1].headers as Record<string, string>).Cookie,
+		'SAP_SESSIONID=abc; sap-usercontext=client=250',
+	);
+	assert.equal(calls[1].body, JSON.stringify({ Name: 'Created' }));
+	assert.deepEqual(result, {
+		item: { ID: '1', Name: 'Created' },
+		statusCode: 201,
+		serializedBytes: 33,
+		etag: 'W/"created"',
+	});
+});
+
+test('sends PATCH concurrency control and accepts an empty DELETE response', async () => {
+	const creds = credentials();
+	const calls: Array<Record<string, unknown>> = [];
+	const httpRequest = async (options: unknown) => {
+		calls.push(options as Record<string, unknown>);
+		if (calls.length % 2 === 1) {
+			return {
+				statusCode: 200,
+				headers: { 'X-CSRF-Token': 'token', 'Set-Cookie': 'SESSION=one; Path=/' },
+				body: '',
+			};
+		}
+		return { statusCode: 204, headers: {}, body: '' };
+	};
+	const url = buildMutationUrl(
+		creds,
+		'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+		'A_BusinessPartner',
+		"'1'",
+	);
+	const patchResult = await requestMutation(
+		httpRequest,
+		creds,
+		'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+		'PATCH',
+		url,
+		{ Name: 'Updated' },
+		'W/"current"',
+	);
+	assert.equal((calls[1].headers as Record<string, string>)['If-Match'], 'W/"current"');
+	assert.equal(patchResult.statusCode, 204);
+	const deleteResult = await requestMutation(
+		httpRequest,
+		creds,
+		'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+		'DELETE',
+		url,
+		undefined,
+		'*',
+	);
+	assert.equal(calls[3].body, undefined);
+	assert.equal((calls[3].headers as Record<string, string>).Prefer, 'return=minimal');
+	assert.deepEqual(deleteResult, {
+		item: undefined,
+		statusCode: 204,
+		serializedBytes: 0,
+		etag: undefined,
+	});
+});
+
+test('fails closed when the CSRF response is missing a token', async () => {
+	await assert.rejects(
+		() =>
+			requestMutation(
+				async () => ({ statusCode: 200, headers: {}, body: '' }),
+				credentials(),
+				'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
+				'POST',
+				'https://sap.example.com/service/Things',
+				{ Name: 'No token' },
+			),
+		/did not return a usable CSRF token/,
 	);
 });

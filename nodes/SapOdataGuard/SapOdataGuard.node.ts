@@ -18,30 +18,41 @@ import {
 import {
 	allowedEntitySetsFromMetadata,
 	buildEntityUrl,
+	buildMutationUrl,
 	projectItem,
 	requestCollection,
 	requestMetadata,
+	requestMutation,
 	requestSingle,
 } from './client';
 import {
 	entityPolicyFor,
 	servicePolicyFor,
 	validateGovernanceConfiguration,
+	validateIfMatch,
+	validateWritePayload,
 } from './governance';
 import {
 	buildFilter,
 	buildKeyPredicate,
 	buildOrderBy,
+	normalizeKeyValues,
 	normalizeUiFilters,
 	normalizeUiOrderBy,
 	selectedFieldsFromInput,
 } from './query';
 import { enforceAiToolByteLimit, resolveAiToolPolicy } from './toolPolicy';
 import type {
+	EntityOperation,
+	EntityWriteOperation,
 	FilterLogic,
 	ODataGuardCredentials,
 	ODataHttpRequest,
 } from './types';
+
+function isWriteOperation(operation: EntityOperation): operation is EntityWriteOperation {
+	return operation === 'create' || operation === 'update' || operation === 'delete';
+}
 
 function credentialName(authentication: string): string {
 	return authentication === 'oauth2' ? 'sapOdataGuardOAuth2Api' : 'sapOdataGuardApi';
@@ -92,11 +103,11 @@ export class SapOdataGuard implements INodeType {
 		group: ['input'],
 		version: 1,
 		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
-		description: 'Read approved SAP OData V2/V4 data with deny-by-default guardrails',
+		description: 'Read and write approved SAP OData V2/V4 data with deny-by-default guardrails',
 		usableAsTool: {
 			replacements: {
 				description:
-					'Give an AI agent bounded read-only access to explicitly approved SAP OData services, entities, and fields',
+					'Give an AI agent bounded access to explicitly approved SAP OData services, entities, operations, and fields',
 			},
 		},
 		defaults: { name: 'Logali SAP OData Guard' },
@@ -182,8 +193,11 @@ export class SapOdataGuard implements INodeType {
 				noDataExpression: true,
 				displayOptions: { show: { resource: ['entity'] } },
 				options: [
+					{ name: 'Create', value: 'create', action: 'Create an approved entity' },
+					{ name: 'Delete', value: 'delete', action: 'Delete an approved entity' },
 					{ name: 'Get', value: 'get', action: 'Get one approved entity by key' },
 					{ name: 'Get Many', value: 'getMany', action: 'Get approved entities' },
+					{ name: 'Update', value: 'update', action: 'Update an approved entity' },
 				],
 				default: 'getMany',
 			},
@@ -213,7 +227,9 @@ export class SapOdataGuard implements INodeType {
 				default: '{}',
 				placeholder: '{"BusinessPartner":"1000000"}',
 				description: 'Exact structured key defined by the selected entity policy',
-				displayOptions: { show: { resource: ['entity'], operation: ['get'] } },
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['get', 'update', 'delete'] },
+				},
 				required: true,
 			},
 			{
@@ -224,7 +240,35 @@ export class SapOdataGuard implements INodeType {
 				placeholder: 'BusinessPartner,BusinessPartnerFullName',
 				description:
 					'Comma-separated projection. Empty means every policy-approved field, never every server field.',
-				displayOptions: { show: { resource: ['entity'] } },
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['get', 'getMany'] },
+				},
+			},
+			{
+				displayName: 'Data JSON',
+				name: 'dataJson',
+				type: 'json',
+				default: '{}',
+				placeholder: '{"BusinessPartnerCategory":"2","FirstName":"Ada"}',
+				description:
+					'Entity payload. Every top-level field and value type must be explicitly allowed by the credential policy.',
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['create', 'update'] },
+				},
+				required: true,
+			},
+			{
+				displayName: 'If-Match',
+				name: 'ifMatch',
+				type: 'string',
+				default: '',
+				placeholder: 'W/"..."',
+				description:
+					'Current entity ETag. The wildcard * works only when the credential policy explicitly allows it.',
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['update', 'delete'] },
+				},
+				required: true,
 			},
 			{
 				displayName: 'Filters',
@@ -395,6 +439,7 @@ export class SapOdataGuard implements INodeType {
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const inputItems = this.getInputData();
 		const outputItems: INodeExecutionData[] = [];
+		let writeCount = 0;
 		for (let itemIndex = 0; itemIndex < inputItems.length; itemIndex += 1) {
 			try {
 				const authentication = this.getNodeParameter(
@@ -411,7 +456,12 @@ export class SapOdataGuard implements INodeType {
 				)) as unknown as ODataGuardCredentials;
 				const policies = validateGovernanceConfiguration(credentials);
 				const service = servicePolicyFor(servicePath, policies);
-				const aiPolicy = resolveAiToolPolicy(this.getNode().type, resource, credentials);
+				const aiPolicy = resolveAiToolPolicy(
+					this.getNode().type,
+					resource,
+					operation,
+					credentials,
+				);
 				const startedAt = Date.now();
 				const httpRequest: ODataHttpRequest =
 					authentication === 'oauth2'
@@ -464,19 +514,103 @@ export class SapOdataGuard implements INodeType {
 				}
 
 				const entitySet = this.getNodeParameter('entitySet', itemIndex) as string;
-				const readOperation = operation === 'get' ? 'get' : 'getMany';
-				const entity = entityPolicyFor(service, entitySet, readOperation);
-				const fields = selectedFieldsFromInput(
-					this.getNodeParameter('fields', itemIndex, ''),
-					entity,
-				);
+				if (!['get', 'getMany', 'create', 'update', 'delete'].includes(operation)) {
+					throw new OperationalError(`Unsupported entity operation ${operation}.`);
+				}
+				const entityOperation = operation as EntityOperation;
+				const entity = entityPolicyFor(service, entitySet, entityOperation);
 				const includeMetadata = this.getNodeParameter(
 					'includeMetadata',
 					itemIndex,
 					true,
 				) as boolean;
 
-				if (readOperation === 'get') {
+				if (isWriteOperation(entityOperation)) {
+					writeCount += 1;
+					const writeLimit = Math.min(
+						credentials.maxWrites,
+						aiPolicy.maxWrites ?? credentials.maxWrites,
+					);
+					if (writeCount > writeLimit) {
+						throw new OperationalError(
+							`Write count exceeds the credential limit of ${writeLimit} per execution.`,
+						);
+					}
+					const keyParameter =
+						entityOperation === 'create'
+							? undefined
+							: this.getNodeParameter('keyJson', itemIndex);
+					const keyValues =
+						keyParameter === undefined ? undefined : normalizeKeyValues(keyParameter, entity);
+					const key =
+						keyValues === undefined
+							? undefined
+							: buildKeyPredicate(keyValues, entity, service.version);
+					const body =
+						entityOperation === 'delete'
+							? undefined
+							: validateWritePayload(
+									this.getNodeParameter('dataJson', itemIndex),
+									entity,
+									entityOperation,
+									service.version,
+									credentials.maxRequestBytes,
+								);
+					const ifMatch =
+						entityOperation === 'create'
+							? undefined
+							: validateIfMatch(this.getNodeParameter('ifMatch', itemIndex), entity);
+					const method =
+						entityOperation === 'create'
+							? 'POST'
+							: entityOperation === 'update'
+								? 'PATCH'
+								: 'DELETE';
+					const url = buildMutationUrl(
+						credentials,
+						service.path,
+						entity.name,
+						key,
+					);
+					const result = await requestMutation(
+						httpRequest,
+						credentials,
+						service.path,
+						method,
+						url,
+						body,
+						ifMatch,
+					);
+					const json: IDataObject = result.item
+						? projectItem(result.item, entity.fields)
+						: { ...(keyValues ?? {}), success: true };
+					if (includeMetadata) {
+						const extra: IDataObject = {
+							entitySet: entity.name,
+							writeApplied: true,
+							csrfApplied: true,
+							statusCode: result.statusCode,
+							responseBytes: result.serializedBytes,
+						};
+						if (result.etag) extra.etag = result.etag;
+						json._odata = metadataObject(
+							service.path,
+							operation,
+							service.version,
+							startedAt,
+							extra,
+						);
+					}
+					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
+					outputItems.push({ json, pairedItem: { item: itemIndex } });
+					continue;
+				}
+
+				const fields = selectedFieldsFromInput(
+					this.getNodeParameter('fields', itemIndex, ''),
+					entity,
+				);
+				if (entityOperation === 'get') {
 					const key = buildKeyPredicate(
 						this.getNodeParameter('keyJson', itemIndex),
 						entity,
@@ -489,11 +623,19 @@ export class SapOdataGuard implements INodeType {
 					const result = await requestSingle(httpRequest, credentials, url);
 					const json = projectItem(result.item, fields);
 					if (includeMetadata) {
-						json._odata = metadataObject(service.path, operation, service.version, startedAt, {
+						const extra: IDataObject = {
 							entitySet: entity.name,
 							rowCount: 1,
 							responseBytes: result.serializedBytes,
-						});
+						};
+						if (result.etag) extra.etag = result.etag;
+						json._odata = metadataObject(
+							service.path,
+							operation,
+							service.version,
+							startedAt,
+							extra,
+						);
 					}
 					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
 					outputItems.push({ json, pairedItem: { item: itemIndex } });

@@ -64,7 +64,7 @@
     "allowMetadata": true,
     "entities": {
       "A_SalesOrder": {
-        "operations": ["get", "getMany"],
+        "operations": ["get", "getMany", "create", "update", "delete"],
         "fields": [
           "SalesOrder",
           "SalesOrderType",
@@ -72,6 +72,7 @@
           "DistributionChannel",
           "OrganizationDivision",
           "SoldToParty",
+          "PurchaseOrderByCustomer",
           "CreationDate",
           "SalesOrderDate",
           "TotalNetAmount",
@@ -87,7 +88,32 @@
           "TotalNetAmount": "number"
         },
         "orderByFields": ["SalesOrder", "CreationDate", "TotalNetAmount"],
-        "requiredFilters": []
+        "requiredFilters": [],
+        "createFields": {
+          "SalesOrderType": "string",
+          "SalesOrganization": "string",
+          "DistributionChannel": "string",
+          "OrganizationDivision": "string",
+          "SoldToParty": "string",
+          "PurchaseOrderByCustomer": "string",
+          "TransactionCurrency": "string",
+          "to_Item": "object"
+        },
+        "updateFields": {
+          "PurchaseOrderByCustomer": "string"
+        },
+        "requiredCreateFields": [
+          "SalesOrderType",
+          "SalesOrganization",
+          "DistributionChannel",
+          "OrganizationDivision",
+          "SoldToParty",
+          "PurchaseOrderByCustomer",
+          "to_Item"
+        ],
+        "nullableCreateFields": [],
+        "nullableUpdateFields": [],
+        "allowWildcardIfMatch": false
       }
     }
   },

@@ -5,6 +5,7 @@ import type {
 	EntityPolicy,
 	ODataGuardCredentials,
 	ODataHttpRequest,
+	ODataMutationResult,
 	ODataPage,
 } from './types';
 
@@ -66,6 +67,20 @@ export function buildEntityUrl(
 	if (options.filter) url.searchParams.set('$filter', options.filter);
 	if (options.orderBy) url.searchParams.set('$orderby', options.orderBy);
 	if (options.top !== undefined) url.searchParams.set('$top', String(options.top));
+	addSapContext(url, credentials);
+	const result = url.toString();
+	enforceUrlLength(result, credentials.maxUrlLength);
+	return result;
+}
+
+export function buildMutationUrl(
+	credentials: ODataGuardCredentials,
+	servicePath: string,
+	entitySet: string,
+	keyPredicate?: string,
+): string {
+	const suffix = keyPredicate ? `${entitySet}(${keyPredicate})` : entitySet;
+	const url = new URL(`${serviceRootUrl(credentials, servicePath)}/${suffix}`);
 	addSapContext(url, credentials);
 	const result = url.toString();
 	enforceUrlLength(result, credentials.maxUrlLength);
@@ -161,6 +176,102 @@ function requestOptions(
 	return options;
 }
 
+interface ODataFullResponse {
+	body: unknown;
+	headers: Record<string, unknown>;
+	statusCode: number;
+}
+
+function fullResponse(value: unknown, label: string): ODataFullResponse {
+	if (!value || typeof value !== 'object' || !('headers' in value) || !('statusCode' in value)) {
+		throw new OperationalError(`${label} did not return the required HTTP headers.`);
+	}
+	const response = value as {
+		body?: unknown;
+		headers?: unknown;
+		statusCode?: unknown;
+	};
+	if (!response.headers || typeof response.headers !== 'object' || Array.isArray(response.headers)) {
+		throw new OperationalError(`${label} returned invalid HTTP headers.`);
+	}
+	const statusCode = Number(response.statusCode);
+	if (!Number.isInteger(statusCode) || statusCode < 100 || statusCode > 599) {
+		throw new OperationalError(`${label} returned an invalid HTTP status code.`);
+	}
+	return {
+		body: response.body,
+		headers: response.headers as Record<string, unknown>,
+		statusCode,
+	};
+}
+
+function headerValue(headers: Record<string, unknown>, name: string): unknown {
+	const normalized = name.toLowerCase();
+	for (const [key, value] of Object.entries(headers)) {
+		if (key.toLowerCase() === normalized) return value;
+	}
+	return undefined;
+}
+
+function containsControlCharacter(value: string): boolean {
+	return [...value].some((character) => {
+		const code = character.charCodeAt(0);
+		return code <= 31 || code === 127;
+	});
+}
+
+function safeResponseHeader(value: unknown, label: string, maximum = 4096): string | undefined {
+	const candidate = Array.isArray(value) ? value[0] : value;
+	if (candidate === undefined || candidate === null || candidate === '') return undefined;
+	const normalized = String(candidate).trim();
+	if (!normalized || normalized.length > maximum || containsControlCharacter(normalized)) {
+		throw new OperationalError(`${label} returned an invalid header value.`);
+	}
+	return normalized;
+}
+
+function cookieHeader(value: unknown): string | undefined {
+	if (value === undefined || value === null) return undefined;
+	const rawCookies = Array.isArray(value)
+		? value.map(String)
+		: String(value).split(/,(?=\s*[^;,=\s]+=[^;,]*)/);
+	const cookies = rawCookies
+		.map((cookie) => cookie.trim().split(';', 1)[0])
+		.filter((cookie) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+=[^\r\n;]*$/.test(cookie));
+	if (cookies.length === 0) return undefined;
+	const result = cookies.join('; ');
+	if (result.length > 16384) {
+		throw new OperationalError('SAP OData CSRF response returned oversized session cookies.');
+	}
+	return result;
+}
+
+function csrfRequestOptions(
+	credentials: ODataGuardCredentials,
+	servicePath: string,
+): IHttpRequestOptions {
+	const url = new URL(`${serviceRootUrl(credentials, servicePath)}/`);
+	addSapContext(url, credentials);
+	const result: IHttpRequestOptions = {
+		method: 'GET',
+		url: url.toString(),
+		headers: {
+			Accept: 'application/json',
+			'Cache-Control': 'no-cache',
+			'X-CSRF-Token': 'Fetch',
+		},
+		json: false,
+		returnFullResponse: true,
+		timeout: credentials.requestTimeout,
+		skipSslCertificateValidation: credentials.rejectUnauthorized === false,
+	};
+	if (credentials.authMode === 'basicAuth') {
+		result.auth = { username: credentials.username ?? '', password: credentials.password ?? '' };
+	}
+	enforceUrlLength(result.url, credentials.maxUrlLength);
+	return result;
+}
+
 function credentialSecrets(credentials: ODataGuardCredentials): string[] {
 	const secrets = new Set<string>();
 	const inspect = (value: unknown, key = ''): void => {
@@ -188,15 +299,19 @@ async function performRequest(
 	httpRequest: ODataHttpRequest,
 	options: IHttpRequestOptions,
 	credentials: ODataGuardCredentials,
+	additionalSecrets: string[] = [],
 ): Promise<unknown> {
 	try {
 		return await httpRequest(options);
 	} catch (error) {
 		const original = error instanceof Error ? error.message : String(error);
-		const redacted = credentialSecrets(credentials).reduce(
+		const redacted = [...credentialSecrets(credentials), ...additionalSecrets]
+			.filter((secret) => secret.length >= 4)
+			.sort((a, b) => b.length - a.length)
+			.reduce(
 			(message, secret) => message.split(secret).join('[REDACTED]'),
 			original,
-		);
+			);
 		// Converted to NodeOperationError at the execute boundary, which has node context.
 		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
 		throw new OperationalError(`SAP OData request failed: ${redacted}`);
@@ -320,7 +435,7 @@ export async function requestSingle(
 	httpRequest: ODataHttpRequest,
 	credentials: ODataGuardCredentials,
 	url: string,
-): Promise<{ item: IDataObject; serializedBytes: number }> {
+): Promise<{ item: IDataObject; serializedBytes: number; etag?: string }> {
 	const payload = await performRequest(
 		httpRequest,
 		requestOptions(url, credentials, true),
@@ -333,7 +448,115 @@ export async function requestSingle(
 	if (page.items.length !== 1) {
 		throw new OperationalError('Get expected exactly one OData entity.');
 	}
-	return { item: page.items[0], serializedBytes: page.serializedBytes };
+	const item = page.items[0];
+	const etag =
+		typeof item['@odata.etag'] === 'string'
+			? item['@odata.etag']
+			: item.__metadata &&
+				  typeof item.__metadata === 'object' &&
+				  typeof (item.__metadata as Record<string, unknown>).etag === 'string'
+				? String((item.__metadata as Record<string, unknown>).etag)
+				: undefined;
+	return { item, serializedBytes: page.serializedBytes, etag };
+}
+
+export async function requestMutation(
+	httpRequest: ODataHttpRequest,
+	credentials: ODataGuardCredentials,
+	servicePath: string,
+	method: 'POST' | 'PATCH' | 'DELETE',
+	url: string,
+	body?: Record<string, unknown>,
+	ifMatch?: string,
+): Promise<ODataMutationResult> {
+	const csrfRaw = await performRequest(
+		httpRequest,
+		csrfRequestOptions(credentials, servicePath),
+		credentials,
+	);
+	const csrfResponse = fullResponse(csrfRaw, 'SAP OData CSRF request');
+	const csrfToken = safeResponseHeader(
+		headerValue(csrfResponse.headers, 'x-csrf-token'),
+		'SAP OData CSRF request',
+	);
+	if (!csrfToken || /^(fetch|required)$/i.test(csrfToken)) {
+		throw new OperationalError('SAP OData service did not return a usable CSRF token.');
+	}
+	const cookie = cookieHeader(headerValue(csrfResponse.headers, 'set-cookie'));
+	const headers: Record<string, string> = {
+		Accept: 'application/json',
+		'Content-Type': 'application/json',
+		Prefer: method === 'DELETE' ? 'return=minimal' : 'return=representation',
+		'X-CSRF-Token': csrfToken,
+	};
+	if (cookie) headers.Cookie = cookie;
+	if (ifMatch) headers['If-Match'] = ifMatch;
+	const options: IHttpRequestOptions = {
+		method,
+		url,
+		headers,
+		json: false,
+		returnFullResponse: true,
+		timeout: credentials.requestTimeout,
+		skipSslCertificateValidation: credentials.rejectUnauthorized === false,
+	};
+	if (body !== undefined) options.body = JSON.stringify(body);
+	if (credentials.authMode === 'basicAuth') {
+		options.auth = { username: credentials.username ?? '', password: credentials.password ?? '' };
+	}
+	const mutationRaw = await performRequest(
+		httpRequest,
+		options,
+		credentials,
+		[csrfToken, ...(cookie ? [cookie] : [])],
+	);
+	const mutation = fullResponse(mutationRaw, 'SAP OData write request');
+	let responseBody = mutation.body;
+	if (Buffer.isBuffer(responseBody)) responseBody = responseBody.toString('utf8');
+	if (typeof responseBody === 'string') {
+		const trimmed = responseBody.trim();
+		if (!trimmed) responseBody = undefined;
+		else {
+			try {
+				responseBody = JSON.parse(trimmed);
+			} catch {
+				// Converted to NodeOperationError at the execute boundary, which has node context.
+				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+				throw new OperationalError('SAP OData write response was not valid JSON.');
+			}
+		}
+	}
+	const serializedBytes = responseBody === undefined ? 0 : byteLength(responseBody);
+	if (serializedBytes > credentials.maxResponseBytes) {
+		throw new OperationalError('OData write response exceeds the credential byte limit.');
+	}
+	let item: IDataObject | undefined;
+	if (responseBody !== undefined) {
+		const page = parseODataPage(responseBody);
+		if (page.items.length > 1) {
+			throw new OperationalError('OData write response returned more than one entity.');
+		}
+		item = page.items[0];
+	}
+	const responseEtag = safeResponseHeader(
+		headerValue(mutation.headers, 'etag'),
+		'SAP OData write response',
+		1024,
+	);
+	const itemEtag =
+		item && typeof item['@odata.etag'] === 'string'
+			? item['@odata.etag']
+			: item?.__metadata &&
+				  typeof item.__metadata === 'object' &&
+				  typeof (item.__metadata as Record<string, unknown>).etag === 'string'
+				? String((item.__metadata as Record<string, unknown>).etag)
+				: undefined;
+	return {
+		item,
+		statusCode: mutation.statusCode,
+		serializedBytes,
+		etag: responseEtag ?? itemEtag,
+	};
 }
 
 export function projectItem(item: IDataObject, fields: string[]): IDataObject {

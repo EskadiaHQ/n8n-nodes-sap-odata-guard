@@ -36,13 +36,17 @@ export function credentials(
 		rejectUnauthorized: true,
 		allowAiTool: false,
 		allowAiMetadata: false,
+		allowAiWrites: false,
 		maxRows: 1000,
 		maxPages: 10,
 		maxUrlLength: 8192,
 		maxResponseBytes: 1048576,
+		maxRequestBytes: 1048576,
+		maxWrites: 100,
 		requestTimeout: 30000,
 		aiToolMaxRows: 100,
 		aiToolMaxBytes: 262144,
+		aiToolMaxWrites: 1,
 		...overrides,
 	};
 }
