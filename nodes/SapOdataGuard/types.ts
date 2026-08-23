@@ -28,6 +28,8 @@ export interface ODataGuardCredentials {
 	sapClient?: string;
 	sapLanguage?: string;
 	servicePoliciesJson: string;
+	allowServiceDiscovery?: boolean;
+	maxCatalogServices?: number;
 	allowPrivateNetwork?: boolean;
 	allowInsecureHttp?: boolean;
 	rejectUnauthorized?: boolean;
@@ -44,6 +46,16 @@ export interface ODataGuardCredentials {
 	aiToolMaxRows?: number;
 	aiToolMaxBytes?: number;
 	aiToolMaxWrites?: number;
+}
+
+export interface ODataCatalogService extends IDataObject {
+	id: string;
+	title: string;
+	technicalName: string;
+	servicePath: string;
+	protocolVersion: ODataVersion;
+	technicalVersion?: string;
+	description?: string;
 }
 
 export interface RequiredFilterPolicy {

@@ -36,6 +36,19 @@ test('AI Tool needs general and metadata-specific opt-ins', () => {
 	);
 });
 
+test('AI Tool cannot enumerate the SAP service catalog', () => {
+	assert.throws(
+		() =>
+			resolveAiToolPolicy(
+				'pkg.sapOdataGuardTool',
+				'catalog',
+				'listServices',
+				credentials({ allowAiTool: true, allowServiceDiscovery: true }),
+			),
+		/catalog discovery is intentionally unavailable/,
+	);
+});
+
 test('AI Tool write operations need a separate opt-in and write cap', () => {
 	assert.throws(
 		() =>

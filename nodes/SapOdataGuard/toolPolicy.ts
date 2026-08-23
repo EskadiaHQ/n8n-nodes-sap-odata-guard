@@ -27,6 +27,11 @@ export function resolveAiToolPolicy(
 			'AI Tool use is disabled in the selected credential. Enable it only for governed OData access.',
 		);
 	}
+	if (resource === 'catalog') {
+		throw new OperationalError(
+			'SAP service catalog discovery is intentionally unavailable to AI Tool nodes.',
+		);
+	}
 	if (resource === 'metadata' && credentials.allowAiMetadata !== true) {
 		throw new OperationalError('AI metadata discovery requires its separate credential opt-in.');
 	}

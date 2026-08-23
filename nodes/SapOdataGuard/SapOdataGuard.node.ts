@@ -23,8 +23,10 @@ import {
 	requestCollection,
 	requestMetadata,
 	requestMutation,
+	requestServiceCatalog,
 	requestSingle,
 } from './client';
+import { readOnlyPolicyTemplateFromMetadata } from './catalog';
 import {
 	entityPolicyFor,
 	servicePolicyFor,
@@ -118,9 +120,9 @@ export class SapOdataGuard implements INodeType {
 			dark: 'file:sapOdataGuard-v022.dark.svg',
 		},
 		group: ['input'],
-		version: [1, 1.1],
+		version: [1, 1.1, 1.2],
 		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
-		description: 'Read and write approved SAP OData V2/V4 data with deny-by-default guardrails',
+		description: 'Discover visible SAP services and read or write approved OData V2/V4 data with deny-by-default guardrails',
 		usableAsTool: {
 			replacements: {
 				description:
@@ -161,11 +163,32 @@ export class SapOdataGuard implements INodeType {
 				type: 'options',
 				noDataExpression: true,
 				options: [
+					{ name: 'Service Catalog', value: 'catalog' },
 					{ name: 'Connection', value: 'connection' },
 					{ name: 'Metadata', value: 'metadata' },
 					{ name: 'Entity', value: 'entity' },
 				],
 				default: 'connection',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['catalog'] } },
+				options: [
+					{
+						name: 'List Visible Services',
+						value: 'listServices',
+						action: 'List visible services from SAP',
+					},
+					{
+						name: 'Generate Read-Only Policy Template',
+						value: 'getReadPolicyTemplate',
+						action: 'Generate a read only policy template from metadata',
+					},
+				],
+				default: 'listServices',
 			},
 			{
 				displayName: 'Operation',
@@ -225,6 +248,20 @@ export class SapOdataGuard implements INodeType {
 				typeOptions: { loadOptionsMethod: 'getAllowedServices' },
 				default: '',
 				description: 'Only service paths present in the selected credential policy are listed. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+				displayOptions: { show: { resource: ['connection', 'metadata', 'entity'] } },
+				required: true,
+			},
+			{
+				displayName: 'Catalog Service Name or ID',
+				name: 'catalogServicePath',
+				type: 'options',
+				typeOptions: { loadOptionsMethod: 'getDiscoveredServices' },
+				default: '',
+				description:
+					'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				displayOptions: {
+					show: { resource: ['catalog'], operation: ['getReadPolicyTemplate'] },
+				},
 				required: true,
 			},
 			{
@@ -541,6 +578,29 @@ export class SapOdataGuard implements INodeType {
 					value: service.path,
 				}));
 			},
+			async getDiscoveredServices(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const authentication = String(
+					this.getCurrentNodeParameter('authentication') ?? 'basicOrNone',
+				);
+				const credentials = await loadCredentials(this);
+				validateGovernanceConfiguration(credentials);
+				const httpRequest: ODataHttpRequest =
+					authentication === 'oauth2'
+						? async (options) =>
+								await this.helpers.httpRequestWithAuthentication.call(
+									this,
+									'sapOdataGuardOAuth2Api',
+									options,
+								)
+						: async (options) => await this.helpers.httpRequest(options);
+				const result = await requestServiceCatalog(httpRequest, credentials);
+				const policies = validateGovernanceConfiguration(credentials);
+				return result.services.map((service) => ({
+					name: `${policies.has(service.servicePath) ? '✓ Allowed' : 'Discovered'} · ${service.title} (${service.technicalName})`,
+					value: service.servicePath,
+					description: service.description ?? service.servicePath,
+				}));
+			},
 			async getAllowedEntities(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const credentials = await loadCredentials(this);
 				const policies = validateGovernanceConfiguration(credentials);
@@ -630,13 +690,11 @@ export class SapOdataGuard implements INodeType {
 				) as string;
 				const resource = this.getNodeParameter('resource', itemIndex) as string;
 				const operation = this.getNodeParameter('operation', itemIndex) as string;
-				const servicePath = this.getNodeParameter('servicePath', itemIndex) as string;
 				const credentials = (await this.getCredentials(
 					credentialName(authentication),
 					itemIndex,
 				)) as unknown as ODataGuardCredentials;
 				const policies = validateGovernanceConfiguration(credentials);
-				const service = servicePolicyFor(servicePath, policies);
 				const aiPolicy = resolveAiToolPolicy(
 					this.getNode().type,
 					resource,
@@ -653,6 +711,78 @@ export class SapOdataGuard implements INodeType {
 									options,
 								)
 						: async (options) => await this.helpers.httpRequest(options);
+
+				if (resource === 'catalog') {
+					const catalog = await requestServiceCatalog(httpRequest, credentials);
+					if (operation === 'listServices') {
+						for (const discovered of catalog.services) {
+							const allowedPolicy = policies.get(discovered.servicePath);
+							const json: IDataObject = {
+								...discovered,
+								allowedByCredential: allowedPolicy !== undefined,
+								allowedEntityCount: allowedPolicy?.entities.size ?? 0,
+								_odata: {
+									operation,
+									version: 'v2',
+									catalogDiscovery: true,
+									policyApplied: false,
+									durationMs: Date.now() - startedAt,
+									responseBytes: catalog.serializedBytes,
+								},
+							};
+							outputItems.push({ json, pairedItem: { item: itemIndex } });
+						}
+						continue;
+					}
+					if (operation !== 'getReadPolicyTemplate') {
+						throw new OperationalError(`Unsupported catalog operation ${operation}.`);
+					}
+					const selectedPath = this.getNodeParameter(
+						'catalogServicePath',
+						itemIndex,
+					) as string;
+					const discovered = catalog.services.find(
+						(candidate) => candidate.servicePath === selectedPath,
+					);
+					if (!discovered) {
+						throw new OperationalError(
+							'Selected service is not present in the current SAP service catalog response.',
+						);
+					}
+					const metadata = await requestMetadata(
+						httpRequest,
+						credentials,
+						discovered.servicePath,
+					);
+					const template = readOnlyPolicyTemplateFromMetadata(
+						discovered.servicePath,
+						discovered.protocolVersion,
+						metadata.xml,
+					);
+					outputItems.push({
+						json: {
+							...discovered,
+							alreadyAllowed: policies.has(discovered.servicePath),
+							entityCount: template.entityCount,
+							fieldCount: template.fieldCount,
+							policyTemplate: template.policy,
+							policyJson: JSON.stringify(template.policy, null, 2),
+							_odata: {
+								operation,
+								version: discovered.protocolVersion,
+								catalogDiscovery: true,
+								policyApplied: false,
+								durationMs: Date.now() - startedAt,
+								metadataBytes: metadata.serializedBytes,
+							},
+						},
+						pairedItem: { item: itemIndex },
+					});
+					continue;
+				}
+
+				const servicePath = this.getNodeParameter('servicePath', itemIndex) as string;
+				const service = servicePolicyFor(servicePath, policies);
 
 				if (resource === 'connection') {
 					const result = await requestMetadata(httpRequest, credentials, service.path);

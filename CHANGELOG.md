@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.0] - 2026-08-23
+
+### Added
+
+- Add a separately gated **Service Catalog** resource that lists the OData V2 services visible to
+  the authenticated SAP user through Gateway `CATALOGSERVICE`.
+- Add a searchable discovered-service selector and a read-only policy-template generator based on
+  each service's live `$metadata`.
+- Mark every discovered service as allowed or discovery-only without silently granting execution.
+- Add credential limits for catalog opt-in and maximum returned services.
+
+### Security
+
+- Keep Service Policies JSON authoritative for every data read and write; catalog discovery grants
+  no entity execution permission by itself.
+- Exclude catalog enumeration from the AI Tool variant even when normal metadata access is enabled.
+- Ignore catalog entries that point outside the configured SAP origin or contain unsafe paths.
+
 ## [0.2.4] - 2026-08-23
 
 ### Added

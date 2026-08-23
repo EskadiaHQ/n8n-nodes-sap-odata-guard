@@ -7,10 +7,25 @@ Logali SAP OData Guard separates **code capability** from **credential authoriza
 | Must a new SAP service be programmed into the node? | No, if it uses the implemented V2/V4 CRUD contract. Add its exact path and policy to the credential. |
 | Must a new entity set be programmed into the node? | No. Add the exact entity name, operations, fields, keys, filters, and sorting policy. |
 | Can policy JSON enable create, update, or delete? | Yes, only for the exact entity and fields listed in `createFields` or `updateFields`; Delete requires an exact approved key. |
-| Can policy JSON enable actions, batches, or triggers? | No. Those capabilities do not exist in version 0.2.0. |
+| Can policy JSON enable actions, batches, or triggers? | No. Those capabilities do not exist in version 0.3.0. |
 | What happens when a service, entity, operation, or field is absent? | Execution fails before sending that data request. |
 | Can a workflow replace a required row filter? | No. Required filters are generated from the credential and joined with `AND`. |
 | Can server pagination drop a required filter? | No. Continuation links cannot change protected query parameters. |
+| Does catalog discovery grant access to a service? | No. It only shows services visible to the SAP user and can generate a reviewable read-only policy template. |
+
+## Catalog discovery and authorization
+
+Catalog discovery has its own credential switch and result limit. It queries SAP Gateway
+`CATALOGSERVICE`, marks services already present in the credential policy, and can derive a
+read-only template from live metadata. The template is not applied automatically.
+
+To authorize a discovered service, an administrator must:
+
+1. grant the SAP user runtime access to the activated OData service and its business data;
+2. review the generated template and remove every entity, field, filter, and sort option the
+   workflow does not need;
+3. merge the approved service object into **Service Policies JSON**;
+4. test the exact credential with a bounded read before enabling a workflow.
 
 ## Minimal policy
 

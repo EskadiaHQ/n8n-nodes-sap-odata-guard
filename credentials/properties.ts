@@ -39,6 +39,23 @@ export const commonCredentialProperties: INodeProperties[] = [
 		required: true,
 	},
 	{
+		displayName: 'Allow SAP Service Catalog Discovery',
+		name: 'allowServiceDiscovery',
+		type: 'boolean',
+		default: false,
+		description:
+			'Whether this credential may list the OData V2 services visible to the SAP user through Gateway CATALOGSERVICE. Discovery does not grant execution access; Service Policies JSON remains authoritative.',
+	},
+	{
+		displayName: 'Maximum Catalog Services',
+		name: 'maxCatalogServices',
+		type: 'number',
+		typeOptions: { minValue: 1, maxValue: 1000 },
+		default: 250,
+		description: 'Maximum number of services returned by one catalog discovery request',
+		displayOptions: { show: { allowServiceDiscovery: [true] } },
+	},
+	{
 		displayName: 'Allow Private Network Access',
 		name: 'allowPrivateNetwork',
 		type: 'boolean',

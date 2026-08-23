@@ -1,13 +1,16 @@
 import { OperationalError, type IDataObject, type IHttpRequestOptions } from 'n8n-workflow';
 
-import { normalizeHost } from './governance';
+import { normalizeHost, normalizeServicePath } from './governance';
 import type {
 	EntityPolicy,
+	ODataCatalogService,
 	ODataGuardCredentials,
 	ODataHttpRequest,
 	ODataMutationResult,
 	ODataPage,
 } from './types';
+
+const SAP_V2_CATALOG_PATH = '/sap/opu/odata/IWFND/CATALOGSERVICE;v=2';
 
 function byteLength(value: unknown): number {
 	return Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
@@ -382,6 +385,92 @@ export async function requestMetadata(
 		);
 	}
 	return { xml, serializedBytes };
+}
+
+function catalogServicePath(
+	entry: IDataObject,
+	credentials: ODataGuardCredentials,
+): string | undefined {
+	const rawUrl = entry.ServiceUrl ?? entry.BaseUrl;
+	if (typeof rawUrl === 'string' && rawUrl.trim()) {
+		try {
+			const candidate = new URL(rawUrl, normalizeHost(
+				credentials.host,
+				credentials.allowInsecureHttp === true,
+				credentials.allowPrivateNetwork === true,
+			));
+			const expectedOrigin = new URL(normalizeHost(
+				credentials.host,
+				credentials.allowInsecureHttp === true,
+				credentials.allowPrivateNetwork === true,
+			)).origin;
+			if (candidate.origin !== expectedOrigin || candidate.search || candidate.hash) return undefined;
+			return normalizeServicePath(candidate.pathname);
+		} catch {
+			return undefined;
+		}
+	}
+	const id = String(entry.ID ?? entry.TechnicalServiceName ?? '').trim();
+	if (!id || !/^[A-Za-z0-9_/.-]{1,160}$/.test(id)) return undefined;
+	const namespace = String(entry.Namespace ?? 'sap').trim();
+	if (!/^[A-Za-z0-9_]{1,64}$/.test(namespace)) return undefined;
+	const technicalVersion = String(entry.TechnicalServiceVersion ?? '').trim();
+	const versionSuffix = technicalVersion && !['1', '0001'].includes(technicalVersion)
+		? `;v=${technicalVersion.replace(/^0+/, '') || '1'}`
+		: '';
+	try {
+		return normalizeServicePath(`/sap/opu/odata/${namespace}/${id}${versionSuffix}`);
+	} catch {
+		return undefined;
+	}
+}
+
+export async function requestServiceCatalog(
+	httpRequest: ODataHttpRequest,
+	credentials: ODataGuardCredentials,
+): Promise<{ services: ODataCatalogService[]; serializedBytes: number }> {
+	if (credentials.allowServiceDiscovery !== true) {
+		throw new OperationalError(
+			'SAP service catalog discovery is disabled in the selected credential.',
+		);
+	}
+	const maximum = Math.min(Math.max(Number(credentials.maxCatalogServices ?? 250), 1), 1000);
+	const url = new URL(`${serviceRootUrl(credentials, SAP_V2_CATALOG_PATH)}/ServiceCollection`);
+	url.searchParams.set('$orderby', 'Title asc');
+	url.searchParams.set('$top', String(maximum));
+	addSapContext(url, credentials);
+	const serializedUrl = serializeODataUrl(url);
+	enforceUrlLength(serializedUrl, credentials.maxUrlLength);
+	const payload = await performRequest(
+		httpRequest,
+		requestOptions(serializedUrl, credentials, true),
+		credentials,
+	);
+	const page = parseODataPage(payload);
+	if (page.serializedBytes > credentials.maxResponseBytes) {
+		throw new OperationalError('SAP service catalog response exceeds the credential byte limit.');
+	}
+	const services = new Map<string, ODataCatalogService>();
+	for (const entry of page.items.slice(0, maximum)) {
+		const servicePath = catalogServicePath(entry, credentials);
+		if (!servicePath || services.has(servicePath)) continue;
+		const technicalName = String(entry.TechnicalServiceName ?? entry.ID ?? servicePath.split('/').pop() ?? '').trim();
+		if (!technicalName) continue;
+		const id = String(entry.ID ?? technicalName).trim();
+		const title = String(entry.Title ?? technicalName).trim();
+		const technicalVersion = String(entry.TechnicalServiceVersion ?? '').trim();
+		const description = String(entry.Description ?? '').trim();
+		services.set(servicePath, {
+			id,
+			title,
+			technicalName,
+			servicePath,
+			protocolVersion: 'v2',
+			...(technicalVersion ? { technicalVersion } : {}),
+			...(description ? { description } : {}),
+		});
+	}
+	return { services: [...services.values()], serializedBytes: page.serializedBytes };
 }
 
 export interface ReadCollectionResult {

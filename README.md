@@ -1,8 +1,9 @@
 # Logali SAP OData Guard
 
-Security-first n8n community node for governed reads and writes through SAP OData V2 and V4.
+Security-first n8n community node for discovering visible SAP services and governing reads and
+writes through SAP OData V2 and V4.
 
-> Status: prerelease `0.2.4` for controlled, non-production evaluation.
+> Status: prerelease `0.3.0` for controlled, non-production evaluation.
 
 ## Why Guard?
 
@@ -13,8 +14,9 @@ to the credential policy before it becomes usable.
 
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.2.4` implements connection checks, metadata, Get, Get
-  Many, Create, Update, and Delete. Policy JSON cannot unlock actions, batches, or triggers.
+- **Implemented capability**: version `0.3.0` implements service-catalog discovery, connection
+  checks, metadata, Get, Get Many, Create, Update, and Delete. Policy JSON cannot unlock actions,
+  batches, or triggers.
 - **Credential authorization**: within those implemented operations, anything absent from the policy is
   denied by default.
 
@@ -38,6 +40,10 @@ node output.
 
 ## Operations
 
+- **Service Catalog → List Visible Services**: returns the OData V2 services visible to the SAP
+  user and marks whether each one is already allowed by the credential policy.
+- **Service Catalog → Generate Read-Only Policy Template**: loads live `$metadata` for one
+  discovered service and produces a reviewable policy skeleton. It never edits the credential.
 - **Connection → Test Connection**: fetches `$metadata` from one allowed service and confirms the
   policy, authentication, endpoint, and response limits.
 - **Metadata → Get Metadata**: returns the bounded XML metadata for an allowed service.
@@ -53,6 +59,12 @@ Service, entity, output, filter, sort, and write-field choices are loaded direct
 selected credential policy. Create and Update accept either a complete JSON object or the visual
 field mapper; mapped values use JSON literals so their number, boolean, null, object, and array
 types remain unambiguous.
+
+Catalog discovery is a separate credential opt-in. It calls SAP Gateway
+`/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/ServiceCollection`, so the SAP user must be authorized for
+that catalog service. Seeing a service does not make it executable: an administrator reviews the
+generated template, removes unnecessary entities and fields, and then merges the approved subset
+into **Service Policies JSON**.
 
 ## Credential policy
 
@@ -115,6 +127,9 @@ the credential. Metadata additionally requires **Allow AI Metadata Discovery**, 
 Update, or Delete requires **Allow AI Write Operations**. Normal and tool executions remain
 subject to the same service/entity/operation/field policies; the tool also receives its own row,
 byte, and write-count caps.
+
+Service-catalog enumeration is never available to the AI Tool variant. A human administrator must
+discover services and approve the resulting policy.
 
 ## Development
 

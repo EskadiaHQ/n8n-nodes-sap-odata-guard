@@ -650,6 +650,14 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 	assertIntegerRange(credentials.maxRequestBytes, 'Maximum Write Request Size', 128, 10_485_760);
 	assertIntegerRange(credentials.maxWrites, 'Maximum Writes', 1, 1000);
 	assertIntegerRange(credentials.requestTimeout, 'Request Timeout', 1000, 300_000);
+	if (credentials.allowServiceDiscovery === true) {
+		assertIntegerRange(
+			credentials.maxCatalogServices ?? 250,
+			'Maximum Catalog Services',
+			1,
+			1000,
+		);
+	}
 	if (credentials.allowAiMetadata === true && credentials.allowAiTool !== true) {
 		throw new OperationalError('AI metadata discovery requires Allow AI Tool Use as well.');
 	}

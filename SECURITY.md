@@ -2,7 +2,7 @@
 
 ## Status
 
-Version `0.2.0` is a prerelease for non-production evaluation. Create, Update, and Delete are
+Version `0.3.0` is a prerelease for non-production evaluation. Create, Update, and Delete are
 implemented through OData only. Functions/actions, batch, and webhook operations are not
 implemented and cannot be enabled through policy JSON.
 
@@ -26,6 +26,7 @@ Missing policy means denied. The node also:
 - requires `If-Match` for update/delete and denies wildcard concurrency unless policy allows it;
 - limits serialized write bytes and total mutations per execution;
 - keeps AI Tool use disabled by default and requires separate opt-ins for metadata and writes;
+- keeps service-catalog discovery disabled by default, bounded, same-origin, and unavailable to AI Tool nodes;
 - redacts known credential secrets from request errors.
 
 ## Reporting
