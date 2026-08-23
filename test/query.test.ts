@@ -8,6 +8,7 @@ import {
 	buildOrderBy,
 	formatODataLiteral,
 	selectedFieldsFromInput,
+	writePayloadFromUi,
 } from '../nodes/SapOdataGuard/query';
 import { credentials } from './fixtures';
 
@@ -46,6 +47,10 @@ test('joins required filters with AND around caller filter logic', () => {
 test('defaults projection to approved fields and rejects unknown projection/sort fields', () => {
 	const entity = entityPolicy();
 	assert.deepEqual(selectedFieldsFromInput('', entity), entity.fields);
+	assert.deepEqual(
+		selectedFieldsFromInput(['BusinessPartner', 'BusinessPartnerFullName'], entity),
+		['BusinessPartner', 'BusinessPartnerFullName'],
+	);
 	assert.throws(() => selectedFieldsFromInput('BusinessPartner,SecretField', entity), /not allowed/);
 	assert.equal(
 		buildOrderBy([{ field: 'BusinessPartner', direction: 'asc' }], entity),
@@ -54,6 +59,34 @@ test('defaults projection to approved fields and rejects unknown projection/sort
 	assert.throws(
 		() => buildOrderBy([{ field: 'BusinessPartnerFullName', direction: 'asc' }], entity),
 		/not allowed/,
+	);
+});
+
+test('builds a write payload from governed field mapping values', () => {
+	assert.deepEqual(
+		writePayloadFromUi({
+			values: [
+				{ field: 'Name', valueJson: '"Ada"' },
+				{ field: 'Amount', valueJson: '42.5' },
+				{ field: 'Enabled', valueJson: 'true' },
+				{ field: 'Details', valueJson: '{"source":"n8n"}' },
+			],
+		}),
+		{ Name: 'Ada', Amount: 42.5, Enabled: true, Details: { source: 'n8n' } },
+	);
+	assert.throws(
+		() =>
+			writePayloadFromUi({
+				values: [
+					{ field: 'Name', valueJson: '"Ada"' },
+					{ field: 'Name', valueJson: '"Grace"' },
+				],
+			}),
+		/configured more than once/,
+	);
+	assert.throws(
+		() => writePayloadFromUi({ values: [{ field: 'Name', valueJson: 'Ada' }] }),
+		/must contain a valid JSON value/,
 	);
 });
 

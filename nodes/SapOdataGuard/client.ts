@@ -493,9 +493,11 @@ export async function requestMutation(
 	const headers: Record<string, string> = {
 		Accept: 'application/json',
 		'Content-Type': 'application/json',
-		Prefer: method === 'DELETE' ? 'return=minimal' : 'return=representation',
 		'X-CSRF-Token': csrfToken,
 	};
+	// SAP CAP and other strict OData runtimes reject return preferences on DELETE.
+	// The successful 2xx status is sufficient evidence for a delete operation.
+	if (method !== 'DELETE') headers.Prefer = 'return=representation';
 	if (cookie) headers.Cookie = cookie;
 	if (ifMatch) headers['If-Match'] = ifMatch;
 	const options: IHttpRequestOptions = {

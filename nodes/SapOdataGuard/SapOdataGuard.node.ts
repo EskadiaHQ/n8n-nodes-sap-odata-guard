@@ -40,9 +40,11 @@ import {
 	normalizeUiFilters,
 	normalizeUiOrderBy,
 	selectedFieldsFromInput,
+	writePayloadFromUi,
 } from './query';
 import { enforceAiToolByteLimit, resolveAiToolPolicy } from './toolPolicy';
 import type {
+	EntityPolicy,
 	EntityOperation,
 	EntityWriteOperation,
 	FilterLogic,
@@ -90,6 +92,21 @@ async function loadCredentials(
 	return (await context.getCredentials(
 		credentialName(authentication),
 	)) as unknown as ODataGuardCredentials;
+}
+
+async function currentEntityPolicy(
+	context: ILoadOptionsFunctions,
+): Promise<EntityPolicy | undefined> {
+	const servicePath = String(context.getCurrentNodeParameter('servicePath') ?? '');
+	const entitySet = String(context.getCurrentNodeParameter('entitySet') ?? '');
+	const operation = String(context.getCurrentNodeParameter('operation') ?? '');
+	if (!servicePath || !entitySet || !['get', 'getMany', 'create', 'update', 'delete'].includes(operation)) {
+		return undefined;
+	}
+	const credentials = await loadCredentials(context);
+	const policies = validateGovernanceConfiguration(credentials);
+	const service = servicePolicyFor(servicePath, policies);
+	return entityPolicyFor(service, entitySet, operation as EntityOperation);
 }
 
 export class SapOdataGuard implements INodeType {
@@ -233,15 +250,33 @@ export class SapOdataGuard implements INodeType {
 				required: true,
 			},
 			{
-				displayName: 'Fields',
+				displayName: 'Field Names or IDs',
 				name: 'fields',
-				type: 'string',
-				default: '',
-				placeholder: 'BusinessPartner,BusinessPartnerFullName',
+				type: 'multiOptions',
+				typeOptions: {
+					loadOptionsMethod: 'getAllowedOutputFields',
+					loadOptionsDependsOn: ['servicePath', 'entitySet', 'operation'],
+				},
+				default: [],
 				description:
-					'Comma-separated projection. Empty means every policy-approved field, never every server field.',
+					'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				displayOptions: {
 					show: { resource: ['entity'], operation: ['get', 'getMany'] },
+				},
+			},
+			{
+				displayName: 'Payload Input',
+				name: 'dataInputMode',
+				type: 'options',
+				options: [
+					{ name: 'JSON Object', value: 'json' },
+					{ name: 'Map Approved Fields', value: 'fields' },
+				],
+				default: 'json',
+				description:
+					'Choose a complete JSON object or build it from fields allowed by the selected credential policy',
+				displayOptions: {
+					show: { resource: ['entity'], operation: ['create', 'update'] },
 				},
 			},
 			{
@@ -253,9 +288,59 @@ export class SapOdataGuard implements INodeType {
 				description:
 					'Entity payload. Every top-level field and value type must be explicitly allowed by the credential policy.',
 				displayOptions: {
-					show: { resource: ['entity'], operation: ['create', 'update'] },
+					show: {
+						resource: ['entity'],
+						operation: ['create', 'update'],
+						dataInputMode: ['json'],
+					},
 				},
 				required: true,
+			},
+			{
+				displayName: 'Data Fields',
+				name: 'dataFields',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				placeholder: 'Add Approved Field',
+				description:
+					'Each value is a JSON value: use quotes for text, for example "Ada"; numbers, booleans, null, objects, and arrays use normal JSON syntax',
+				displayOptions: {
+					show: {
+						resource: ['entity'],
+						operation: ['create', 'update'],
+						dataInputMode: ['fields'],
+					},
+				},
+				options: [
+					{
+						displayName: 'Values',
+						name: 'values',
+						values: [
+							{
+								displayName: 'Field Name or ID',
+								name: 'field',
+								type: 'options',
+								typeOptions: {
+									loadOptionsMethod: 'getAllowedWriteFields',
+									loadOptionsDependsOn: ['servicePath', 'entitySet', 'operation'],
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								default: '',
+								required: true,
+							},
+							{
+								displayName: 'JSON Value',
+								name: 'valueJson',
+								type: 'string',
+								default: '',
+								placeholder: '"Ada"',
+								required: true,
+							},
+						],
+					},
+				],
 			},
 			{
 				displayName: 'If-Match',
@@ -282,7 +367,19 @@ export class SapOdataGuard implements INodeType {
 						name: 'values',
 						displayName: 'Filter',
 						values: [
-							{ displayName: 'Field', name: 'field', type: 'string', default: '', required: true },
+							{
+								displayName: 'Field Name or ID',
+								name: 'field',
+								type: 'options',
+								typeOptions: {
+									loadOptionsMethod: 'getAllowedFilterFields',
+									loadOptionsDependsOn: ['servicePath', 'entitySet', 'operation'],
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								default: '',
+								required: true,
+							},
 							{
 								displayName: 'Operator',
 								name: 'operator',
@@ -328,7 +425,19 @@ export class SapOdataGuard implements INodeType {
 						name: 'values',
 						displayName: 'Sort',
 						values: [
-							{ displayName: 'Field', name: 'field', type: 'string', default: '', required: true },
+							{
+								displayName: 'Field Name or ID',
+								name: 'field',
+								type: 'options',
+								typeOptions: {
+									loadOptionsMethod: 'getAllowedOrderByFields',
+									loadOptionsDependsOn: ['servicePath', 'entitySet', 'operation'],
+								},
+								description:
+									'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								default: '',
+								required: true,
+							},
 							{
 								displayName: 'Direction',
 								name: 'direction',
@@ -399,6 +508,36 @@ export class SapOdataGuard implements INodeType {
 					name: entity.name,
 					value: entity.name,
 					description: `Allowed operations: ${[...entity.operations].join(', ')}`,
+				}));
+			},
+			async getAllowedOutputFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const entity = await currentEntityPolicy(this);
+				if (!entity) return [];
+				return entity.fields.map((field) => ({ name: field, value: field }));
+			},
+			async getAllowedFilterFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const entity = await currentEntityPolicy(this);
+				if (!entity) return [];
+				return [...entity.filterFields].map(([field, type]) => ({
+					name: field,
+					value: field,
+					description: `Policy type: ${type}`,
+				}));
+			},
+			async getAllowedOrderByFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const entity = await currentEntityPolicy(this);
+				if (!entity) return [];
+				return [...entity.orderByFields].map((field) => ({ name: field, value: field }));
+			},
+			async getAllowedWriteFields(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
+				const entity = await currentEntityPolicy(this);
+				if (!entity) return [];
+				const operation = String(this.getCurrentNodeParameter('operation') ?? '');
+				const fields = operation === 'create' ? entity.createFields : entity.updateFields;
+				return [...fields].map(([field, type]) => ({
+					name: field,
+					value: field,
+					description: `Policy type: ${type}${entity.requiredCreateFields.has(field) && operation === 'create' ? ' · required' : ''}`,
 				}));
 			},
 		},
@@ -546,11 +685,17 @@ export class SapOdataGuard implements INodeType {
 						keyValues === undefined
 							? undefined
 							: buildKeyPredicate(keyValues, entity, service.version);
+					const bodyInput =
+						entityOperation === 'delete'
+							? undefined
+							: this.getNodeParameter('dataInputMode', itemIndex, 'json') === 'fields'
+								? writePayloadFromUi(this.getNodeParameter('dataFields', itemIndex, {}))
+								: this.getNodeParameter('dataJson', itemIndex);
 					const body =
 						entityOperation === 'delete'
 							? undefined
 							: validateWritePayload(
-									this.getNodeParameter('dataJson', itemIndex),
+									bodyInput,
 									entity,
 									entityOperation,
 									service.version,
