@@ -12,6 +12,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Accept both the legacy comma-separated projection and the new multi-select field value at runtime.
+- Preserve node interface version 1 for existing workflows and expose the new selectors on version 1.1.
 - Omit the `Prefer` header on DELETE so SAP CAP and other strict OData runtimes accept governed deletes.
 
 ## [0.2.3] - 2026-08-22

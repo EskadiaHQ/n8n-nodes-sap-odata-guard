@@ -118,7 +118,7 @@ export class SapOdataGuard implements INodeType {
 			dark: 'file:sapOdataGuard-v022.dark.svg',
 		},
 		group: ['input'],
-		version: 1,
+		version: [1, 1.1],
 		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
 		description: 'Read and write approved SAP OData V2/V4 data with deny-by-default guardrails',
 		usableAsTool: {
@@ -250,6 +250,22 @@ export class SapOdataGuard implements INodeType {
 				required: true,
 			},
 			{
+				displayName: 'Fields',
+				name: 'fields',
+				type: 'string',
+				default: '',
+				placeholder: 'BusinessPartner,BusinessPartnerFullName',
+				description:
+					'Comma-separated projection. Empty means every policy-approved field, never every server field.',
+				displayOptions: {
+					show: {
+						'@version': [{ _cnd: { lte: 1 } }],
+						resource: ['entity'],
+						operation: ['get', 'getMany'],
+					},
+				},
+			},
+			{
 				displayName: 'Field Names or IDs',
 				name: 'fields',
 				type: 'multiOptions',
@@ -261,7 +277,11 @@ export class SapOdataGuard implements INodeType {
 				description:
 					'Choose from the list, or specify IDs using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
 				displayOptions: {
-					show: { resource: ['entity'], operation: ['get', 'getMany'] },
+					show: {
+						'@version': [{ _cnd: { gte: 1.1 } }],
+						resource: ['entity'],
+						operation: ['get', 'getMany'],
+					},
 				},
 			},
 			{
@@ -276,8 +296,28 @@ export class SapOdataGuard implements INodeType {
 				description:
 					'Choose a complete JSON object or build it from fields allowed by the selected credential policy',
 				displayOptions: {
-					show: { resource: ['entity'], operation: ['create', 'update'] },
+					show: {
+						'@version': [{ _cnd: { gte: 1.1 } }],
+						resource: ['entity'],
+						operation: ['create', 'update'],
+					},
 				},
+			},
+			{
+				displayName: 'Data JSON',
+				name: 'dataJson',
+				type: 'json',
+				default: '{}',
+				description:
+					'Entity payload. Every top-level field and value type must be explicitly allowed by the credential policy.',
+				displayOptions: {
+					show: {
+						'@version': [{ _cnd: { lte: 1 } }],
+						resource: ['entity'],
+						operation: ['create', 'update'],
+					},
+				},
+				required: true,
 			},
 			{
 				displayName: 'Data JSON',
@@ -289,6 +329,7 @@ export class SapOdataGuard implements INodeType {
 					'Entity payload. Every top-level field and value type must be explicitly allowed by the credential policy.',
 				displayOptions: {
 					show: {
+						'@version': [{ _cnd: { gte: 1.1 } }],
 						resource: ['entity'],
 						operation: ['create', 'update'],
 						dataInputMode: ['json'],
@@ -307,6 +348,7 @@ export class SapOdataGuard implements INodeType {
 					'Each value is a JSON value: use quotes for text, for example "Ada"; numbers, booleans, null, objects, and arrays use normal JSON syntax',
 				displayOptions: {
 					show: {
+						'@version': [{ _cnd: { gte: 1.1 } }],
 						resource: ['entity'],
 						operation: ['create', 'update'],
 						dataInputMode: ['fields'],
