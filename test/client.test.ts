@@ -253,7 +253,7 @@ test('sends PATCH concurrency control and accepts an empty DELETE response', asy
 		'*',
 	);
 	assert.equal(calls[3].body, undefined);
-	assert.equal((calls[3].headers as Record<string, string>).Prefer, 'return=minimal');
+	assert.equal((calls[3].headers as Record<string, string>).Prefer, undefined);
 	assert.deepEqual(deleteResult, {
 		item: undefined,
 		statusCode: 204,

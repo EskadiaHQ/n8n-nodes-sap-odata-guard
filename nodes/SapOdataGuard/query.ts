@@ -40,9 +40,9 @@ export function normalizeUiOrderBy(value: unknown): UiOrderBy[] {
 }
 
 export function selectedFieldsFromInput(value: unknown, policy: EntityPolicy): string[] {
-	const requested = String(value ?? '')
-		.split(',')
-		.map((field) => field.trim())
+	const rawFields: unknown[] = Array.isArray(value) ? value : String(value ?? '').split(',');
+	const requested = rawFields
+		.map((field) => String(field).trim())
 		.filter(Boolean)
 		.map((field) => assertIdentifier(field, 'Selected field'));
 	const selected = requested.length === 0 ? [...policy.fields] : [...new Set(requested)];
@@ -52,6 +52,32 @@ export function selectedFieldsFromInput(value: unknown, policy: EntityPolicy): s
 		}
 	}
 	return selected;
+}
+
+export function writePayloadFromUi(value: unknown): Record<string, unknown> {
+	const entries = collectionValues<Record<string, unknown>>(value);
+	const payload: Record<string, unknown> = {};
+	for (const [index, entry] of entries.entries()) {
+		const field = assertIdentifier(entry.field, `Write field ${index + 1}`);
+		if (Object.prototype.hasOwnProperty.call(payload, field)) {
+			throw new OperationalError(`Write field ${field} is configured more than once.`);
+		}
+		const rawValue = entry.valueJson;
+		if (typeof rawValue !== 'string') {
+			payload[field] = rawValue;
+			continue;
+		}
+		try {
+			payload[field] = JSON.parse(rawValue);
+		} catch {
+			// This is local node-parameter validation, not an API failure.
+			// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+			throw new OperationalError(
+				`Write field ${field} must contain a valid JSON value such as "text", 42, true, null, an object, or an array.`,
+			);
+		}
+	}
+	return payload;
 }
 
 function stringLiteral(value: unknown): string {

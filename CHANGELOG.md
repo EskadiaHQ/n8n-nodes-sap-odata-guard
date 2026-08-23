@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.4] - 2026-08-23
+
+### Added
+
+- Load policy-approved output, filter, sort, and write fields as dynamic n8n selectors.
+- Add an optional field-mapping payload builder for Create and Update while preserving JSON input.
+
+### Fixed
+
+- Accept both the legacy comma-separated projection and the new multi-select field value at runtime.
+- Preserve node interface version 1 for existing workflows and expose the new selectors on version 1.1.
+- Omit the `Prefer` header on DELETE so SAP CAP and other strict OData runtimes accept governed deletes.
+
 ## [0.2.3] - 2026-08-22
 
 ### Fixed

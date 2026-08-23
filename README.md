@@ -2,7 +2,7 @@
 
 Security-first n8n community node for governed reads and writes through SAP OData V2 and V4.
 
-> Status: prerelease `0.2.0` for controlled, non-production evaluation.
+> Status: prerelease `0.2.4` for controlled, non-production evaluation.
 
 ## Why Guard?
 
@@ -13,7 +13,7 @@ to the credential policy before it becomes usable.
 
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.2.0` implements connection checks, metadata, Get, Get
+- **Implemented capability**: version `0.2.4` implements connection checks, metadata, Get, Get
   Many, Create, Update, and Delete. Policy JSON cannot unlock actions, batches, or triggers.
 - **Credential authorization**: within those implemented operations, anything absent from the policy is
   denied by default.
@@ -48,6 +48,11 @@ node output.
 - **Entity → Create**: sends a policy-validated JSON entity with `POST`.
 - **Entity → Update**: sends only policy-approved fields with `PATCH` and mandatory `If-Match`.
 - **Entity → Delete**: sends `DELETE` to an exact structured key with mandatory `If-Match`.
+
+Service, entity, output, filter, sort, and write-field choices are loaded directly from the
+selected credential policy. Create and Update accept either a complete JSON object or the visual
+field mapper; mapped values use JSON literals so their number, boolean, null, object, and array
+types remain unambiguous.
 
 ## Credential policy
 
