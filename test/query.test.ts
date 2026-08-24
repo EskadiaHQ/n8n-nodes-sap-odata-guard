@@ -26,6 +26,8 @@ test('escapes string literals and emits version-specific GUID/date syntax', () =
 		"guid'00112233-4455-4677-8899-aabbccddeeff'",
 	);
 	assert.equal(formatODataLiteral('2026-08-22', 'date', 'v2'), "datetime'2026-08-22T00:00:00'");
+	assert.equal(formatODataLiteral('15.250', 'decimal', 'v2'), '15.250M');
+	assert.equal(formatODataLiteral('15.250', 'decimal', 'v4'), '15.250');
 });
 
 test('joins required filters with AND around caller filter logic', () => {

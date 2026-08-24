@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.1] - 2026-08-24
+
+### Fixed
+
+- Preserve `Edm.Decimal` as an explicit governed type when generating a policy from SAP metadata.
+- Serialize OData V2 decimal write values as JSON strings and decimal filter/key literals with the
+  required `M` suffix, while keeping integer and floating-point fields as normal numbers.
+- Reject exponent notation for policy fields declared as `decimal` so SAP Gateway receives a plain,
+  deterministic decimal value.
+
 ## [0.3.0] - 2026-08-23
 
 ### Added

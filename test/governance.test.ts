@@ -110,7 +110,7 @@ test('parses explicit Create, Update, and Delete policy without granting other f
 					keyFields: { ID: 'string' },
 					filterFields: {},
 					orderByFields: [],
-					createFields: { Name: 'string', ChangedAt: 'datetime', Details: 'object' },
+					createFields: { Name: 'string', Amount: 'decimal', ChangedAt: 'datetime', Details: 'object' },
 					updateFields: { Name: 'string', ChangedAt: 'datetime' },
 					requiredCreateFields: ['Name'],
 					nullableUpdateFields: ['Name'],
@@ -125,6 +125,7 @@ test('parses explicit Create, Update, and Delete policy without granting other f
 		validateWritePayload(
 			{
 				Name: 'Controlled',
+				Amount: 15,
 				ChangedAt: '2026-08-22T12:00:00Z',
 				Details: { results: [{ Code: 'A' }] },
 			},
@@ -135,9 +136,21 @@ test('parses explicit Create, Update, and Delete policy without granting other f
 		),
 		{
 			Name: 'Controlled',
+			Amount: '15',
 			ChangedAt: '/Date(1787400000000)/',
 			Details: { results: [{ Code: 'A' }] },
 		},
+	);
+	assert.throws(
+		() =>
+			validateWritePayload(
+				{ Name: 'Controlled', Amount: '1e3' },
+				entity,
+				'create',
+				'v2',
+				4096,
+			),
+		/plain decimal/,
 	);
 	assert.throws(
 		() => validateWritePayload({ Name: 'x', Secret: 'no' }, entity, 'create', 'v2', 4096),

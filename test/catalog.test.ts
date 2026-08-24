@@ -77,7 +77,7 @@ test('generates a reviewable read-only policy template from metadata', () => {
 					keyFields: { SalesOrder: 'string' },
 					filterFields: {
 						SalesOrder: 'string',
-						TotalNetAmount: 'number',
+						TotalNetAmount: 'decimal',
 						CreationDate: 'datetime',
 					},
 					orderByFields: ['SalesOrder', 'TotalNetAmount', 'CreationDate'],

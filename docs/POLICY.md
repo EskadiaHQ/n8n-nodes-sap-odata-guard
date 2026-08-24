@@ -50,7 +50,7 @@ To authorize a discovered service, an administrator must:
 }
 ```
 
-Identifiers are exact and case-sensitive. Supported value types are `string`, `number`,
+Identifiers are exact and case-sensitive. Supported value types are `string`, `number`, `decimal`,
 `boolean`, `date`, `datetime`, and `guid`.
 
 An entity with `requiredFilters` cannot enable direct `get`, because a key URL cannot enforce
@@ -62,6 +62,10 @@ separate policy.
 `createFields` and `updateFields` are independent type maps. Allowing a field for reads does not
 make it writable. `requiredCreateFields` enforces mandatory create inputs; null is accepted only
 through `nullableCreateFields` or `nullableUpdateFields`.
+
+Use `decimal` for SAP `Edm.Decimal` properties. On OData V2 the Guard serializes those write values
+as JSON strings and emits the required `M` suffix in filters and keys. Use `number` for integer,
+single, and double properties.
 
 Update and Delete require `If-Match`. The wildcard `*` is denied unless the entity policy sets
 `allowWildcardIfMatch` to `true`. The node fetches a CSRF token and matching session cookie before

@@ -19,6 +19,7 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const VALUE_TYPES = new Set<ODataValueType>([
 	'string',
 	'number',
+	'decimal',
 	'boolean',
 	'date',
 	'datetime',
@@ -120,7 +121,7 @@ export function normalizeServicePath(value: unknown): string {
 function parseValueType(value: unknown, label: string): ODataValueType {
 	if (typeof value !== 'string' || !VALUE_TYPES.has(value as ODataValueType)) {
 		throw new OperationalError(
-			`${label} must be one of string, number, boolean, date, datetime, or guid.`,
+			`${label} must be one of string, number, decimal, boolean, date, datetime, or guid.`,
 		);
 	}
 	return value as ODataValueType;
@@ -144,7 +145,7 @@ function parseFieldTypeMap(value: unknown, label: string): Map<string, ODataValu
 function parseWriteValueType(value: unknown, label: string): ODataWriteValueType {
 	if (typeof value !== 'string' || !WRITE_VALUE_TYPES.has(value as ODataWriteValueType)) {
 		throw new OperationalError(
-			`${label} must be one of string, number, boolean, date, datetime, guid, object, or array.`,
+			`${label} must be one of string, number, decimal, boolean, date, datetime, guid, object, or array.`,
 		);
 	}
 	return value as ODataWriteValueType;
@@ -202,9 +203,12 @@ export function validateTypedValue(value: unknown, type: ODataValueType, label: 
 		if (typeof value !== 'string') throw new OperationalError(`${label} must be a string.`);
 		return;
 	}
-	if (type === 'number') {
+	if (type === 'number' || type === 'decimal') {
 		const numeric = typeof value === 'number' ? value : Number(value);
 		if (!Number.isFinite(numeric)) throw new OperationalError(`${label} must be a finite number.`);
+		if (type === 'decimal' && typeof value === 'string' && !/^-?\d+(?:\.\d+)?$/.test(value)) {
+			throw new OperationalError(`${label} must be a plain decimal without exponent notation.`);
+		}
 		return;
 	}
 	if (type === 'boolean') {
@@ -476,6 +480,7 @@ function normalizeWriteValue(
 	if (type === 'datetime' && version === 'v2' && typeof value === 'string') {
 		return `/Date(${Date.parse(value)})/`;
 	}
+	if (type === 'decimal' && version === 'v2') return String(value);
 	if (type === 'boolean' && typeof value === 'string') return value === 'true';
 	return value;
 }

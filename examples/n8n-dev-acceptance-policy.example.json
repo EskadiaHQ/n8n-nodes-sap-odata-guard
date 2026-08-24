@@ -85,7 +85,7 @@
           "SalesOrganization": "string",
           "SoldToParty": "string",
           "CreationDate": "datetime",
-          "TotalNetAmount": "number"
+          "TotalNetAmount": "decimal"
         },
         "orderByFields": ["SalesOrder", "CreationDate", "TotalNetAmount"],
         "requiredFilters": [],
@@ -148,7 +148,7 @@
           "CompanyCode": "string",
           "CreationDate": "datetime",
           "BillingDocumentIsCancelled": "boolean",
-          "TotalNetAmount": "number"
+          "TotalNetAmount": "decimal"
         },
         "orderByFields": ["BillingDocument", "CreationDate", "BillingDocumentDate", "TotalNetAmount"],
         "requiredFilters": []

@@ -4,7 +4,14 @@ export type ODataVersion = 'v2' | 'v4';
 export type EntityReadOperation = 'get' | 'getMany';
 export type EntityWriteOperation = 'create' | 'update' | 'delete';
 export type EntityOperation = EntityReadOperation | EntityWriteOperation;
-export type ODataValueType = 'string' | 'number' | 'boolean' | 'date' | 'datetime' | 'guid';
+export type ODataValueType =
+	| 'string'
+	| 'number'
+	| 'decimal'
+	| 'boolean'
+	| 'date'
+	| 'datetime'
+	| 'guid';
 export type ODataWriteValueType = ODataValueType | 'object' | 'array';
 export type FilterOperator =
 	| 'eq'

@@ -101,7 +101,7 @@ complete policy-approved projection, never `*`.
 required row filters: a direct key URL cannot prove that the target row satisfies those filters.
 Use `Get Many` with a key filter for scoped reads and a separate policy for writes.
 
-Supported field types are `string`, `number`, `boolean`, `date`, `datetime`, and `guid`.
+Supported field types are `string`, `number`, `decimal`, `boolean`, `date`, `datetime`, and `guid`.
 Supported filter operators are `eq`, `ne`, `gt`, `ge`, `lt`, `le`, `contains`, `startsWith`, and
 `endsWith`. String values are escaped as OData literals; V2 and V4 function syntax is generated
 separately.
@@ -111,6 +111,9 @@ the exact top-level properties and types accepted for each operation. Types `obj
 explicitly permit a bounded nested JSON value for deep OData payloads; nested property names are
 safety-checked, but the administrator remains responsible for limiting SAP authorizations for
 those navigation writes. Null requires the corresponding nullable-field allowlist.
+
+Declare SAP `Edm.Decimal` fields as `decimal`, not `number`. This lets the Guard apply the OData V2
+JSON and URI literal rules without changing integer, single, or double values.
 
 Update and Delete always require `If-Match`. An exact ETag is preferred. `*` is rejected unless
 `allowWildcardIfMatch` is true for that exact entity. Credential limits also cap request bytes and

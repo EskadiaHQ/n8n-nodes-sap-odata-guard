@@ -92,6 +92,10 @@ export function formatODataLiteral(
 	validateTypedValue(value, type, 'OData value');
 	if (type === 'string') return stringLiteral(value);
 	if (type === 'number') return String(Number(value));
+	if (type === 'decimal') {
+		const literal = String(value);
+		return version === 'v2' ? `${literal}M` : literal;
+	}
 	if (type === 'boolean') return String(value).toLowerCase();
 	if (type === 'guid') return version === 'v2' ? `guid'${String(value)}'` : String(value);
 	if (type === 'date') {

@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-sap-odata-guard",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"description": "Logali SAP OData Guard: discover visible SAP services and govern deny-by-default OData reads and writes for n8n",
 	"license": "MIT",
 	"homepage": "https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard#readme",

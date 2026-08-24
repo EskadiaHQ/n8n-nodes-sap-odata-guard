@@ -26,6 +26,7 @@ function valueType(edmType: string): ODataValueType | undefined {
 	if (type === 'Edm.Guid') return 'guid';
 	if (type === 'Edm.Date') return 'date';
 	if (['Edm.DateTime', 'Edm.DateTimeOffset'].includes(type)) return 'datetime';
+	if (type === 'Edm.Decimal') return 'decimal';
 	if (
 		[
 			'Edm.Byte',
@@ -35,7 +36,6 @@ function valueType(edmType: string): ODataValueType | undefined {
 			'Edm.Int64',
 			'Edm.Single',
 			'Edm.Double',
-			'Edm.Decimal',
 		].includes(type)
 	) {
 		return 'number';
