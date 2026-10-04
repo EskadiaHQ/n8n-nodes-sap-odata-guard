@@ -1,3 +1,7 @@
+import { cachedDiscovery } from './discoveryCache';
+import { SapODataRequestError } from './errors';
+import { requestWithPolicy } from './resilience';
+
 import { OperationalError, type IDataObject, type IHttpRequestOptions } from 'n8n-workflow';
 
 import { normalizeHost, normalizeServicePath } from './governance';
@@ -18,7 +22,9 @@ function byteLength(value: unknown): number {
 
 function enforceUrlLength(url: string, maximum: number): void {
 	if (url.length > maximum) {
-		throw new OperationalError(`OData URL is ${url.length} characters, above the limit of ${maximum}.`);
+		throw new OperationalError(
+			`OData URL is ${url.length} characters, above the limit of ${maximum}.`,
+		);
 	}
 }
 
@@ -34,10 +40,7 @@ function addSapContext(url: URL, credentials: ODataGuardCredentials): void {
 	if (credentials.sapLanguage) url.searchParams.set('sap-language', credentials.sapLanguage);
 }
 
-export function serviceRootUrl(
-	credentials: ODataGuardCredentials,
-	servicePath: string,
-): string {
+export function serviceRootUrl(credentials: ODataGuardCredentials, servicePath: string): string {
 	const host = normalizeHost(
 		credentials.host,
 		credentials.allowInsecureHttp === true,
@@ -46,10 +49,7 @@ export function serviceRootUrl(
 	return `${host}${servicePath}`;
 }
 
-export function buildMetadataUrl(
-	credentials: ODataGuardCredentials,
-	servicePath: string,
-): string {
+export function buildMetadataUrl(credentials: ODataGuardCredentials, servicePath: string): string {
 	const url = new URL(`${serviceRootUrl(credentials, servicePath)}/$metadata`);
 	addSapContext(url, credentials);
 	const result = serializeODataUrl(url);
@@ -167,6 +167,20 @@ export function resolveNextLink(
 	return result;
 }
 
+function jsonMediaType(credentials: ODataGuardCredentials, url: string): string {
+	const path = new URL(url).pathname;
+	const policies = JSON.parse(credentials.servicePoliciesJson) as Record<
+		string,
+		{ version?: string }
+	>;
+	const isV4 = Object.entries(policies).some(
+		([service, policy]) =>
+			policy.version === 'v4' &&
+			(path === service || path.startsWith(`${service.replace(/\/$/, '')}/`)),
+	);
+	return isV4 ? 'application/json;IEEE754Compatible=true' : 'application/json';
+}
+
 function requestOptions(
 	url: string,
 	credentials: ODataGuardCredentials,
@@ -175,13 +189,18 @@ function requestOptions(
 	const options: IHttpRequestOptions = {
 		method: 'GET',
 		url,
-		headers: { Accept: json ? 'application/json' : 'application/xml, text/xml' },
+		headers: {
+			Accept: json ? jsonMediaType(credentials, url) : 'application/xml, text/xml',
+		},
 		json,
 		timeout: credentials.requestTimeout,
 		skipSslCertificateValidation: credentials.rejectUnauthorized === false,
 	};
 	if (credentials.authMode === 'basicAuth') {
-		options.auth = { username: credentials.username ?? '', password: credentials.password ?? '' };
+		options.auth = {
+			username: credentials.username ?? '',
+			password: credentials.password ?? '',
+		};
 	}
 	return options;
 }
@@ -201,7 +220,11 @@ function fullResponse(value: unknown, label: string): ODataFullResponse {
 		headers?: unknown;
 		statusCode?: unknown;
 	};
-	if (!response.headers || typeof response.headers !== 'object' || Array.isArray(response.headers)) {
+	if (
+		!response.headers ||
+		typeof response.headers !== 'object' ||
+		Array.isArray(response.headers)
+	) {
 		throw new OperationalError(`${label} returned invalid HTTP headers.`);
 	}
 	const statusCode = Number(response.statusCode);
@@ -276,33 +299,13 @@ function csrfRequestOptions(
 		skipSslCertificateValidation: credentials.rejectUnauthorized === false,
 	};
 	if (credentials.authMode === 'basicAuth') {
-		result.auth = { username: credentials.username ?? '', password: credentials.password ?? '' };
+		result.auth = {
+			username: credentials.username ?? '',
+			password: credentials.password ?? '',
+		};
 	}
 	enforceUrlLength(result.url, credentials.maxUrlLength);
 	return result;
-}
-
-function credentialSecrets(credentials: ODataGuardCredentials): string[] {
-	const secrets = new Set<string>();
-	const inspect = (value: unknown, key = ''): void => {
-		if (typeof value === 'string') {
-			if (/password|secret|token/i.test(key) && value.length >= 4) secrets.add(value);
-			if (key === 'oauthTokenData') {
-				try {
-					inspect(JSON.parse(value), key);
-				} catch {
-					// OAuth token data may already be an opaque token instead of JSON.
-				}
-			}
-			return;
-		}
-		if (!value || typeof value !== 'object') return;
-		for (const [nestedKey, nestedValue] of Object.entries(value as Record<string, unknown>)) {
-			inspect(nestedValue, nestedKey);
-		}
-	};
-	inspect(credentials);
-	return [...secrets].sort((a, b) => b.length - a.length);
 }
 
 async function performRequest(
@@ -312,19 +315,11 @@ async function performRequest(
 	additionalSecrets: string[] = [],
 ): Promise<unknown> {
 	try {
-		return await httpRequest(options);
+		return await requestWithPolicy(httpRequest, options, credentials);
 	} catch (error) {
-		const original = error instanceof Error ? error.message : String(error);
-		const redacted = [...credentialSecrets(credentials), ...additionalSecrets]
-			.filter((secret) => secret.length >= 4)
-			.sort((a, b) => b.length - a.length)
-			.reduce(
-			(message, secret) => message.split(secret).join('[REDACTED]'),
-			original,
-			);
-		// Converted to NodeOperationError at the execute boundary, which has node context.
+		// The node boundary converts this sanitized adapter error to NodeOperationError.
 		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-		throw new OperationalError(`SAP OData request failed: ${redacted}`);
+		throw new SapODataRequestError(error, credentials, additionalSecrets);
 	}
 }
 
@@ -371,20 +366,28 @@ export async function requestMetadata(
 	httpRequest: ODataHttpRequest,
 	credentials: ODataGuardCredentials,
 	servicePath: string,
+	fresh = false,
 ): Promise<{ xml: string; serializedBytes: number }> {
-	const response = await performRequest(
-		httpRequest,
-		requestOptions(buildMetadataUrl(credentials, servicePath), credentials, false),
+	return cachedDiscovery(
 		credentials,
+		`metadata:${servicePath}`,
+		async () => {
+			const response = await performRequest(
+				httpRequest,
+				requestOptions(buildMetadataUrl(credentials, servicePath), credentials, false),
+				credentials,
+			);
+			const xml = Buffer.isBuffer(response) ? response.toString('utf8') : String(response);
+			const serializedBytes = byteLength(xml);
+			if (serializedBytes > credentials.maxResponseBytes) {
+				throw new OperationalError(
+					`Metadata response is ${serializedBytes} bytes, above the credential limit.`,
+				);
+			}
+			return { xml, serializedBytes };
+		},
+		fresh,
 	);
-	const xml = Buffer.isBuffer(response) ? response.toString('utf8') : String(response);
-	const serializedBytes = byteLength(xml);
-	if (serializedBytes > credentials.maxResponseBytes) {
-		throw new OperationalError(
-			`Metadata response is ${serializedBytes} bytes, above the credential limit.`,
-		);
-	}
-	return { xml, serializedBytes };
 }
 
 function catalogServicePath(
@@ -394,17 +397,23 @@ function catalogServicePath(
 	const rawUrl = entry.ServiceUrl ?? entry.BaseUrl;
 	if (typeof rawUrl === 'string' && rawUrl.trim()) {
 		try {
-			const candidate = new URL(rawUrl, normalizeHost(
-				credentials.host,
-				credentials.allowInsecureHttp === true,
-				credentials.allowPrivateNetwork === true,
-			));
-			const expectedOrigin = new URL(normalizeHost(
-				credentials.host,
-				credentials.allowInsecureHttp === true,
-				credentials.allowPrivateNetwork === true,
-			)).origin;
-			if (candidate.origin !== expectedOrigin || candidate.search || candidate.hash) return undefined;
+			const candidate = new URL(
+				rawUrl,
+				normalizeHost(
+					credentials.host,
+					credentials.allowInsecureHttp === true,
+					credentials.allowPrivateNetwork === true,
+				),
+			);
+			const expectedOrigin = new URL(
+				normalizeHost(
+					credentials.host,
+					credentials.allowInsecureHttp === true,
+					credentials.allowPrivateNetwork === true,
+				),
+			).origin;
+			if (candidate.origin !== expectedOrigin || candidate.search || candidate.hash)
+				return undefined;
 			return normalizeServicePath(candidate.pathname);
 		} catch {
 			return undefined;
@@ -415,9 +424,10 @@ function catalogServicePath(
 	const namespace = String(entry.Namespace ?? 'sap').trim();
 	if (!/^[A-Za-z0-9_]{1,64}$/.test(namespace)) return undefined;
 	const technicalVersion = String(entry.TechnicalServiceVersion ?? '').trim();
-	const versionSuffix = technicalVersion && !['1', '0001'].includes(technicalVersion)
-		? `;v=${technicalVersion.replace(/^0+/, '') || '1'}`
-		: '';
+	const versionSuffix =
+		technicalVersion && !['1', '0001'].includes(technicalVersion)
+			? `;v=${technicalVersion.replace(/^0+/, '') || '1'}`
+			: '';
 	try {
 		return normalizeServicePath(`/sap/opu/odata/${namespace}/${id}${versionSuffix}`);
 	} catch {
@@ -428,49 +438,64 @@ function catalogServicePath(
 export async function requestServiceCatalog(
 	httpRequest: ODataHttpRequest,
 	credentials: ODataGuardCredentials,
+	fresh = false,
 ): Promise<{ services: ODataCatalogService[]; serializedBytes: number }> {
 	if (credentials.allowServiceDiscovery !== true) {
 		throw new OperationalError(
 			'SAP service catalog discovery is disabled in the selected credential.',
 		);
 	}
-	const maximum = Math.min(Math.max(Number(credentials.maxCatalogServices ?? 250), 1), 1000);
-	const url = new URL(`${serviceRootUrl(credentials, SAP_V2_CATALOG_PATH)}/ServiceCollection`);
-	url.searchParams.set('$orderby', 'Title asc');
-	url.searchParams.set('$top', String(maximum));
-	addSapContext(url, credentials);
-	const serializedUrl = serializeODataUrl(url);
-	enforceUrlLength(serializedUrl, credentials.maxUrlLength);
-	const payload = await performRequest(
-		httpRequest,
-		requestOptions(serializedUrl, credentials, true),
+	return cachedDiscovery(
 		credentials,
+		'catalog',
+		async () => {
+			const maximum = Math.min(Math.max(Number(credentials.maxCatalogServices ?? 250), 1), 1000);
+			const url = new URL(`${serviceRootUrl(credentials, SAP_V2_CATALOG_PATH)}/ServiceCollection`);
+			url.searchParams.set('$orderby', 'Title asc');
+			url.searchParams.set('$top', String(maximum));
+			addSapContext(url, credentials);
+			const serializedUrl = serializeODataUrl(url);
+			enforceUrlLength(serializedUrl, credentials.maxUrlLength);
+			const payload = await performRequest(
+				httpRequest,
+				requestOptions(serializedUrl, credentials, true),
+				credentials,
+			);
+			const page = parseODataPage(payload);
+			if (page.serializedBytes > credentials.maxResponseBytes) {
+				throw new OperationalError(
+					'SAP service catalog response exceeds the credential byte limit.',
+				);
+			}
+			const services = new Map<string, ODataCatalogService>();
+			for (const entry of page.items.slice(0, maximum)) {
+				const servicePath = catalogServicePath(entry, credentials);
+				if (!servicePath || services.has(servicePath)) continue;
+				const technicalName = String(
+					entry.TechnicalServiceName ?? entry.ID ?? servicePath.split('/').pop() ?? '',
+				).trim();
+				if (!technicalName) continue;
+				const id = String(entry.ID ?? technicalName).trim();
+				const title = String(entry.Title ?? technicalName).trim();
+				const technicalVersion = String(entry.TechnicalServiceVersion ?? '').trim();
+				const description = String(entry.Description ?? '').trim();
+				services.set(servicePath, {
+					id,
+					title,
+					technicalName,
+					servicePath,
+					protocolVersion: 'v2',
+					...(technicalVersion ? { technicalVersion } : {}),
+					...(description ? { description } : {}),
+				});
+			}
+			return {
+				services: [...services.values()],
+				serializedBytes: page.serializedBytes,
+			};
+		},
+		fresh,
 	);
-	const page = parseODataPage(payload);
-	if (page.serializedBytes > credentials.maxResponseBytes) {
-		throw new OperationalError('SAP service catalog response exceeds the credential byte limit.');
-	}
-	const services = new Map<string, ODataCatalogService>();
-	for (const entry of page.items.slice(0, maximum)) {
-		const servicePath = catalogServicePath(entry, credentials);
-		if (!servicePath || services.has(servicePath)) continue;
-		const technicalName = String(entry.TechnicalServiceName ?? entry.ID ?? servicePath.split('/').pop() ?? '').trim();
-		if (!technicalName) continue;
-		const id = String(entry.ID ?? technicalName).trim();
-		const title = String(entry.Title ?? technicalName).trim();
-		const technicalVersion = String(entry.TechnicalServiceVersion ?? '').trim();
-		const description = String(entry.Description ?? '').trim();
-		services.set(servicePath, {
-			id,
-			title,
-			technicalName,
-			servicePath,
-			protocolVersion: 'v2',
-			...(technicalVersion ? { technicalVersion } : {}),
-			...(description ? { description } : {}),
-		});
-	}
-	return { services: [...services.values()], serializedBytes: page.serializedBytes };
 }
 
 export interface ReadCollectionResult {
@@ -515,12 +540,7 @@ export async function requestCollection(
 			truncated = true;
 			currentUrl = undefined;
 		} else {
-			currentUrl = resolveNextLink(
-				page.nextLink,
-				currentUrl,
-				governedCollectionUrl,
-				credentials,
-			);
+			currentUrl = resolveNextLink(page.nextLink, currentUrl, governedCollectionUrl, credentials);
 		}
 	}
 	if (currentUrl) truncated = true;
@@ -580,8 +600,8 @@ export async function requestMutation(
 	}
 	const cookie = cookieHeader(headerValue(csrfResponse.headers, 'set-cookie'));
 	const headers: Record<string, string> = {
-		Accept: 'application/json',
-		'Content-Type': 'application/json',
+		Accept: jsonMediaType(credentials, url),
+		'Content-Type': jsonMediaType(credentials, url),
 		'X-CSRF-Token': csrfToken,
 	};
 	// SAP CAP and other strict OData runtimes reject return preferences on DELETE.
@@ -600,14 +620,17 @@ export async function requestMutation(
 	};
 	if (body !== undefined) options.body = JSON.stringify(body);
 	if (credentials.authMode === 'basicAuth') {
-		options.auth = { username: credentials.username ?? '', password: credentials.password ?? '' };
+		options.auth = {
+			username: credentials.username ?? '',
+			password: credentials.password ?? '',
+		};
 	}
-	const mutationRaw = await performRequest(
-		httpRequest,
-		options,
-		credentials,
-		[csrfToken, ...(cookie ? [cookie] : [])],
-	);
+	const mutationRaw = await performRequest(httpRequest, options, credentials, [
+		csrfToken,
+		...(cookie
+			? [cookie, ...cookie.split(';').map((pair) => pair.slice(pair.indexOf('=') + 1).trim())]
+			: []),
+	]);
 	const mutation = fullResponse(mutationRaw, 'SAP OData write request');
 	let responseBody = mutation.body;
 	if (Buffer.isBuffer(responseBody)) responseBody = responseBody.toString('utf8');
@@ -665,7 +688,10 @@ export function projectItem(item: IDataObject, fields: string[]): IDataObject {
 	return projected;
 }
 
-export function allowedEntitySetsFromMetadata(xml: string, policy: Map<string, EntityPolicy>): string[] {
+export function allowedEntitySetsFromMetadata(
+	xml: string,
+	policy: Map<string, EntityPolicy>,
+): string[] {
 	const discovered = new Set<string>();
 	const entitySetPattern = /<(?:\w+:)?EntitySet\b[^>]*\bName\s*=\s*["']([^"']+)["'][^>]*>/gi;
 	let match: RegExpExecArray | null;

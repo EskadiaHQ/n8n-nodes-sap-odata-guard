@@ -68,7 +68,8 @@ export const commonCredentialProperties: INodeProperties[] = [
 		name: 'allowInsecureHttp',
 		type: 'boolean',
 		default: false,
-		description: 'Whether HTTP may be used for isolated local tests. Keep disabled in real environments.',
+		description:
+			'Whether HTTP may be used for isolated local tests. Keep disabled in real environments.',
 	},
 	{
 		displayName: 'Validate TLS Certificate',
@@ -132,6 +133,56 @@ export const commonCredentialProperties: INodeProperties[] = [
 		typeOptions: { minValue: 1000, maxValue: 300000 },
 		default: 30000,
 		description: 'Maximum time for each HTTP request',
+	},
+	{
+		displayName: 'Read Retry Attempts',
+		name: 'readRetryAttempts',
+		type: 'number',
+		default: 0,
+		typeOptions: { minValue: 0, maxValue: 3 },
+		description: 'Maximum extra attempts for GET only; writes are never automatically retried',
+	},
+	{
+		displayName: 'Maximum HTTP Elapsed Time (ms)',
+		name: 'maxReadElapsedMs',
+		type: 'number',
+		default: 60000,
+		typeOptions: { minValue: 1000, maxValue: 300000 },
+		description: 'Per-item elapsed budget across pages and retries when retry or pacing is enabled',
+	},
+	{
+		displayName: 'Minimum Request Interval (ms)',
+		name: 'minRequestIntervalMs',
+		type: 'number',
+		default: 0,
+		typeOptions: { minValue: 0, maxValue: 10000 },
+		description:
+			'Minimum interval between requests in this item, including retries; not a global distributed rate limit',
+	},
+	{
+		displayName: 'Maximum HTTP Requests Per Item',
+		name: 'maxHttpRequests',
+		type: 'number',
+		default: 200,
+		typeOptions: { minValue: 2, maxValue: 1000 },
+		description: 'Hard HTTP attempt cap per input item, including retries and CSRF requests',
+	},
+	{
+		displayName: 'Discovery Cache TTL (Seconds)',
+		name: 'discoveryCacheTtlSeconds',
+		type: 'number',
+		default: 60,
+		typeOptions: { minValue: 1, maxValue: 300 },
+		description:
+			'Lifetime of metadata and catalog entries in this worker; maximum 64 entries and 8 MiB',
+	},
+	{
+		displayName: 'Allow Discovery Cache',
+		name: 'allowDiscoveryCache',
+		type: 'boolean',
+		default: false,
+		description:
+			'Whether metadata and catalog may use isolated worker-memory cache. Does not cache data, tokens, cookies or connection tests.',
 	},
 	{
 		displayName: 'Allow AI Tool Use',

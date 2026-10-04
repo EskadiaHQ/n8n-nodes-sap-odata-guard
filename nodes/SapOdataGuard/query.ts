@@ -1,4 +1,12 @@
 import { OperationalError } from 'n8n-workflow';
+import {
+	int64Value,
+	localDateTime,
+	offsetDateTime,
+	timeOfDay,
+	timeDuration,
+	clockDuration,
+} from './scalars';
 
 import { assertIdentifier, validateTypedValue } from './governance';
 import type {
@@ -21,7 +29,9 @@ export function normalizeUiFilters(value: unknown): UiFilter[] {
 	return collectionValues<Record<string, unknown>>(value).map((entry, index) => {
 		const field = assertIdentifier(entry.field, `Filter ${index + 1} field`);
 		const operator = String(entry.operator ?? '') as FilterOperator;
-		if (!['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'contains', 'startsWith', 'endsWith'].includes(operator)) {
+		if (
+			!['eq', 'ne', 'gt', 'ge', 'lt', 'le', 'contains', 'startsWith', 'endsWith'].includes(operator)
+		) {
 			throw new OperationalError(`Filter ${index + 1} contains an unsupported operator.`);
 		}
 		return { field, operator, value: entry.value };
@@ -92,6 +102,17 @@ export function formatODataLiteral(
 	validateTypedValue(value, type, 'OData value');
 	if (type === 'string') return stringLiteral(value);
 	if (type === 'number') return String(Number(value));
+	if (type === 'int64') return `${int64Value(value)}${version === 'v2' ? 'L' : ''}`;
+	if (type === 'datetime-local') {
+		if (version !== 'v2') throw new OperationalError('Edm.DateTime is only supported in OData V2.');
+		return `datetime'${localDateTime(value)}'`;
+	}
+	if (type === 'datetimeoffset')
+		return version === 'v2' ? `datetimeoffset'${offsetDateTime(value)}'` : offsetDateTime(value);
+	if (type === 'time' || type === 'timeofday') {
+		const clock = type === 'time' ? timeDuration(value) : timeOfDay(value);
+		return version === 'v2' ? `time'${clockDuration(clock)}'` : clock;
+	}
 	if (type === 'decimal') {
 		const literal = String(value);
 		return version === 'v2' ? `${literal}M` : literal;
@@ -127,9 +148,7 @@ export function normalizeKeyValues(
 	}
 	const actual = Object.keys(values);
 	const unknown = actual.filter((field) => !policy.keyFields.has(field));
-	const missing = expected.filter(
-		(field) => !Object.prototype.hasOwnProperty.call(values, field),
-	);
+	const missing = expected.filter((field) => !Object.prototype.hasOwnProperty.call(values, field));
 	if (unknown.length > 0 || missing.length > 0 || actual.length !== expected.length) {
 		throw new OperationalError(`Key JSON must contain exactly: ${expected.join(', ')}.`);
 	}
@@ -157,11 +176,7 @@ export function buildKeyPredicate(
 	return parts.join(',');
 }
 
-function filterExpression(
-	filter: UiFilter,
-	policy: EntityPolicy,
-	version: ODataVersion,
-): string {
+function filterExpression(filter: UiFilter, policy: EntityPolicy, version: ODataVersion): string {
 	const type = policy.filterFields.get(filter.field);
 	if (!type) {
 		throw new OperationalError(`Filter field ${filter.field} is not allowed for ${policy.name}.`);
@@ -187,7 +202,9 @@ export function buildFilter(
 	version: ODataVersion,
 ): string | undefined {
 	const user = userFilters.map((filter) => filterExpression(filter, policy, version));
-	const required = policy.requiredFilters.map((filter) => filterExpression(filter, policy, version));
+	const required = policy.requiredFilters.map((filter) =>
+		filterExpression(filter, policy, version),
+	);
 	const userGroup = user.length > 0 ? `(${user.join(` ${logic} `)})` : '';
 	const requiredGroup = required.length > 0 ? `(${required.join(' and ')})` : '';
 	return [requiredGroup, userGroup].filter(Boolean).join(' and ') || undefined;

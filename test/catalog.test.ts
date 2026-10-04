@@ -38,10 +38,7 @@ test('parses and bounds SAP Gateway catalog services', async () => {
 	assert.equal(result.services.length, 2);
 	assert.deepEqual(
 		result.services.map((service) => service.servicePath),
-		[
-			'/sap/opu/odata/sap/API_BUSINESS_PARTNER',
-			'/sap/opu/odata/sap/API_SALES_ORDER_SRV;v=2',
-		],
+		['/sap/opu/odata/sap/API_BUSINESS_PARTNER', '/sap/opu/odata/sap/API_SALES_ORDER_SRV;v=2'],
 	);
 });
 
@@ -74,11 +71,16 @@ test('generates a reviewable read-only policy template from metadata', () => {
 				A_SalesOrder: {
 					operations: ['get', 'getMany'],
 					fields: ['SalesOrder', 'TotalNetAmount', 'CreationDate'],
+					outputTypes: {
+						SalesOrder: 'string',
+						TotalNetAmount: 'decimal',
+						CreationDate: 'datetime-local',
+					},
 					keyFields: { SalesOrder: 'string' },
 					filterFields: {
 						SalesOrder: 'string',
 						TotalNetAmount: 'decimal',
-						CreationDate: 'datetime',
+						CreationDate: 'datetime-local',
 					},
 					orderByFields: ['SalesOrder', 'TotalNetAmount', 'CreationDate'],
 					requiredFilters: [],

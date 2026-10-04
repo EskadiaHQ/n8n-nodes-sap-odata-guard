@@ -10,8 +10,10 @@ function property(name: string) {
 }
 
 test('exposes credential-governed dynamic field selectors', () => {
-	assert.deepEqual(new SapOdataGuard().description.version, [1, 1.1, 1.2]);
-	const fields = new SapOdataGuard().description.properties.filter((entry) => entry.name === 'fields');
+	assert.deepEqual(new SapOdataGuard().description.version, [1, 1.1, 1.2, 1.3]);
+	const fields = new SapOdataGuard().description.properties.filter(
+		(entry) => entry.name === 'fields',
+	);
 	assert.equal(fields.length, 2);
 	assert.equal(fields[0].type, 'string');
 	assert.equal(fields[1].type, 'multiOptions');

@@ -3,7 +3,7 @@
 Security-first n8n community node for discovering visible SAP services and governing reads and
 writes through SAP OData V2 and V4.
 
-> Status: prerelease `0.3.0` for controlled, non-production evaluation.
+> Status: candidate `0.4.0-beta.1` for controlled, non-production evaluation.
 
 ## Why Guard?
 
@@ -14,7 +14,7 @@ to the credential policy before it becomes usable.
 
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.3.0` implements service-catalog discovery, connection
+- **Implemented capability**: version `0.4.0-beta.1` implements service-catalog discovery, connection
   checks, metadata, Get, Get Many, Create, Update, and Delete. Policy JSON cannot unlock actions,
   batches, or triggers.
 - **Credential authorization**: within those implemented operations, anything absent from the policy is
@@ -37,6 +37,38 @@ arrangement for a real end-to-end acceptance test.
 Every modifying request first fetches a CSRF token from the approved service root and sends the
 returned session cookie with the subsequent OData request. Tokens and cookies are never emitted as
 node output.
+
+## Resilience, precise types, and discovery cache
+
+The 0.4 candidate adds explicit `int64`, `datetime-local`, `datetimeoffset`, `time`, and
+`timeofday` policy types. Metadata templates distinguish these EDM types and include optional
+`outputTypes`. Existing `datetime` policies retain their previous behavior. Pass large Int64 and
+Decimal values as strings; unsafe integer numbers are rejected before HTTP. V4 JSON requests
+negotiate `IEEE754Compatible=true`. Collection-valued primitives and inherited entity types are
+excluded from scalar policy templates; incomplete composite keys never enable Get.
+
+**Read Retry Attempts** defaults to zero. When enabled, only GET retries transient network
+failures and HTTP 429/502/503/504, honoring `Retry-After` or bounded exponential backoff. POST,
+PATCH, and DELETE are never automatically retried. **Minimum Request Interval (ms)** defaults to
+zero. Dependent requests share a per-input-item elapsed budget (60 seconds when retry/pacing is
+enabled) and a request-count limit (200 by default), including CSRF reads and pagination. These
+are worker-local budgets, not a global SAP rate limiter.
+
+**Allow Discovery Cache** defaults to false. The bounded in-memory cache holds only catalog and
+metadata responses, never entity data or CSRF tokens. Cache keys include the n8n credential ID
+and a SHA-256 fingerprint of its effective settings. TTL defaults to 60 seconds (maximum 300),
+with 64 entries and 8 MiB per worker. Refresh Discovery bypasses and invalidates older work;
+Connection and credential tests always make a fresh request. Restarts clear the cache.
+
+**Normalize Date and Time Output** defaults to false. It converts only explicitly approved
+top-level fields in `outputTypes`; numeric strings, IDs, untyped fields, and invalid server dates
+remain unchanged. DateTimeOffset envelopes normalize to UTC; local DateTime has no timezone
+suffix. V4 ISO strings are preserved. See [the policy guide](docs/POLICY.md) for examples.
+
+SAP failures expose bounded `statusCode`, `sapCode`, business `details`, and an actionable `hint`
+through Continue On Fail. Credential secrets, authorization headers, CSRF values, session cookies,
+and full inner-error stacks are excluded. Write failures remain failures; a 403 alone never
+triggers another mutation.
 
 ## Operations
 

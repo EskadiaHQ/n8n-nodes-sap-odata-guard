@@ -1,5 +1,16 @@
 import { OperationalError } from 'n8n-workflow';
 
+import {
+	int64Value,
+	calendarDate,
+	localDateTime,
+	offsetDateTime,
+	timeOfDay,
+	timeDuration,
+	clockDuration,
+	v2DateTicks,
+} from './scalars';
+
 import type {
 	EntityPolicy,
 	EntityOperation,
@@ -23,13 +34,14 @@ const VALUE_TYPES = new Set<ODataValueType>([
 	'boolean',
 	'date',
 	'datetime',
+	'int64',
+	'datetime-local',
+	'datetimeoffset',
+	'time',
+	'timeofday',
 	'guid',
 ]);
-const WRITE_VALUE_TYPES = new Set<ODataWriteValueType>([
-	...VALUE_TYPES,
-	'object',
-	'array',
-]);
+const WRITE_VALUE_TYPES = new Set<ODataWriteValueType>([...VALUE_TYPES, 'object', 'array']);
 const FILTER_OPERATORS = new Set<FilterOperator>([
 	'eq',
 	'ne',
@@ -87,7 +99,9 @@ export function assertIdentifier(value: unknown, label: string): string {
 export function normalizeServicePath(value: unknown): string {
 	const raw = String(value ?? '').trim();
 	if (!raw.startsWith('/') || raw.startsWith('//')) {
-		throw new OperationalError('Service paths must be relative absolute paths starting with one /.');
+		throw new OperationalError(
+			'Service paths must be relative absolute paths starting with one /.',
+		);
 	}
 	let parsed: URL;
 	try {
@@ -121,7 +135,7 @@ export function normalizeServicePath(value: unknown): string {
 function parseValueType(value: unknown, label: string): ODataValueType {
 	if (typeof value !== 'string' || !VALUE_TYPES.has(value as ODataValueType)) {
 		throw new OperationalError(
-			`${label} must be one of string, number, decimal, boolean, date, datetime, or guid.`,
+			`${label} must be one of string, number, decimal, int64, boolean, date, datetime, datetime-local, datetimeoffset, time, timeofday, or guid.`,
 		);
 	}
 	return value as ODataValueType;
@@ -145,16 +159,13 @@ function parseFieldTypeMap(value: unknown, label: string): Map<string, ODataValu
 function parseWriteValueType(value: unknown, label: string): ODataWriteValueType {
 	if (typeof value !== 'string' || !WRITE_VALUE_TYPES.has(value as ODataWriteValueType)) {
 		throw new OperationalError(
-			`${label} must be one of string, number, decimal, boolean, date, datetime, guid, object, or array.`,
+			`${label} must be one of a supported scalar type, object, or array.`,
 		);
 	}
 	return value as ODataWriteValueType;
 }
 
-function parseWriteFieldTypeMap(
-	value: unknown,
-	label: string,
-): Map<string, ODataWriteValueType> {
+function parseWriteFieldTypeMap(value: unknown, label: string): Map<string, ODataWriteValueType> {
 	if (value === undefined) return new Map();
 	const record = recordValue(value, label);
 	if (Object.keys(record).length > MAX_FIELDS_PER_POLICY) {
@@ -199,12 +210,42 @@ function parseOperations(value: unknown, label: string): Set<EntityOperation> {
 }
 
 export function validateTypedValue(value: unknown, type: ODataValueType, label: string): void {
+	if (type === 'int64') {
+		int64Value(value);
+		return;
+	}
+	if (type === 'datetime-local') {
+		localDateTime(value);
+		return;
+	}
+	if (type === 'datetimeoffset') {
+		offsetDateTime(value);
+		return;
+	}
+	if (type === 'time') {
+		timeDuration(value);
+		return;
+	}
+	if (type === 'timeofday') {
+		timeOfDay(value);
+		return;
+	}
 	if (type === 'string') {
 		if (typeof value !== 'string') throw new OperationalError(`${label} must be a string.`);
 		return;
 	}
 	if (type === 'number' || type === 'decimal') {
+		if (!['number', 'string'].includes(typeof value) || String(value).trim() === '')
+			throw new OperationalError(`${label} must be a number or numeric string.`);
 		const numeric = typeof value === 'number' ? value : Number(value);
+		if (
+			(type === 'number' || typeof value === 'number') &&
+			Number.isInteger(numeric) &&
+			!Number.isSafeInteger(numeric)
+		)
+			throw new OperationalError(
+				`${label} exceeds safe integer precision; use an int64 or decimal policy type.`,
+			);
 		if (!Number.isFinite(numeric)) throw new OperationalError(`${label} must be a finite number.`);
 		if (type === 'decimal' && typeof value === 'string' && !/^-?\d+(?:\.\d+)?$/.test(value)) {
 			throw new OperationalError(`${label} must be a plain decimal without exponent notation.`);
@@ -227,7 +268,7 @@ export function validateTypedValue(value: unknown, type: ODataValueType, label: 
 		throw new OperationalError(`${label} must be an ISO date string.`);
 	}
 	if (type === 'date') {
-		if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+		if (!calendarDate(value)) {
 			throw new OperationalError(`${label} must use YYYY-MM-DD.`);
 		}
 		return;
@@ -244,13 +285,18 @@ function parseRequiredFilters(
 ): RequiredFilterPolicy[] {
 	if (value === undefined) return [];
 	if (!Array.isArray(value)) throw new OperationalError(`${label} must be an array.`);
-	if (value.length > 50) throw new OperationalError(`${label} cannot contain more than 50 filters.`);
+	if (value.length > 50)
+		throw new OperationalError(`${label} cannot contain more than 50 filters.`);
 	return value.map((entry, index) => {
 		const record = recordValue(entry, `${label}[${index}]`);
 		const field = assertIdentifier(record.field, `${label}[${index}].field`);
 		const type = filterFields.get(field);
-		if (!type) throw new OperationalError(`${label}[${index}] uses a field absent from filterFields.`);
-		if (typeof record.operator !== 'string' || !FILTER_OPERATORS.has(record.operator as FilterOperator)) {
+		if (!type)
+			throw new OperationalError(`${label}[${index}] uses a field absent from filterFields.`);
+		if (
+			typeof record.operator !== 'string' ||
+			!FILTER_OPERATORS.has(record.operator as FilterOperator)
+		) {
 			throw new OperationalError(`${label}[${index}] contains an unsupported operator.`);
 		}
 		const operator = record.operator as FilterOperator;
@@ -282,7 +328,9 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 	);
 	for (const field of orderByFields) {
 		if (!fields.includes(field)) {
-			throw new OperationalError(`${label}.orderByFields contains ${field}, which is not an output field.`);
+			throw new OperationalError(
+				`${label}.orderByFields contains ${field}, which is not an output field.`,
+			);
 		}
 	}
 	const requiredFilters = parseRequiredFilters(
@@ -290,7 +338,10 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 		filterFields,
 		`${label}.requiredFilters`,
 	);
-	if (['get', 'update', 'delete'].some((operation) => operations.has(operation as EntityOperation)) && keyFields.size === 0) {
+	if (
+		['get', 'update', 'delete'].some((operation) => operations.has(operation as EntityOperation)) &&
+		keyFields.size === 0
+	) {
 		throw new OperationalError(
 			`${label} must define keyFields before Get, Update, or Delete can be allowed.`,
 		);
@@ -330,10 +381,15 @@ function parseEntityPolicy(name: string, value: unknown, label: string): EntityP
 			);
 		}
 	}
+	const outputTypes = parseFieldTypeMap(entity.outputTypes, `${label}.outputTypes`);
+	for (const field of outputTypes.keys())
+		if (!fields.includes(field))
+			throw new OperationalError(`Output type ${field} is absent from approved fields.`);
 	return {
 		name,
 		operations,
 		fields,
+		outputTypes,
 		keyFields,
 		filterFields,
 		orderByFields,
@@ -357,9 +413,7 @@ function parseServicePolicy(path: string, value: unknown): ServicePolicy {
 		throw new OperationalError(`Policy for ${path} must define at least one entity.`);
 	}
 	if (Object.keys(entityObject).length > MAX_ENTITIES_PER_SERVICE) {
-		throw new OperationalError(
-			`Policy for ${path} exceeds ${MAX_ENTITIES_PER_SERVICE} entities.`,
-		);
+		throw new OperationalError(`Policy for ${path} exceeds ${MAX_ENTITIES_PER_SERVICE} entities.`);
 	}
 	const entities = new Map<string, EntityPolicy>();
 	for (const [entityName, entityValue] of Object.entries(entityObject)) {
@@ -396,7 +450,8 @@ export function parseServicePolicies(value: string): ServicePolicies {
 	for (const [rawPath, policyValue] of entries) {
 		assertSafeObjectKey(rawPath, 'Service Policies JSON');
 		const path = normalizeServicePath(rawPath);
-		if (policies.has(path)) throw new OperationalError(`Duplicate normalized service policy ${path}.`);
+		if (policies.has(path))
+			throw new OperationalError(`Duplicate normalized service policy ${path}.`);
 		policies.set(path, parseServicePolicy(path, policyValue));
 	}
 	return policies;
@@ -405,7 +460,8 @@ export function parseServicePolicies(value: string): ServicePolicies {
 export function servicePolicyFor(path: string, policies: ServicePolicies): ServicePolicy {
 	const normalized = normalizeServicePath(path);
 	const policy = policies.get(normalized);
-	if (!policy) throw new OperationalError(`Service ${normalized} is not allowed by these credentials.`);
+	if (!policy)
+		throw new OperationalError(`Service ${normalized} is not allowed by these credentials.`);
 	return policy;
 }
 
@@ -417,9 +473,7 @@ export function entityPolicyFor(
 	const normalized = assertIdentifier(entityName, 'Entity Set');
 	const entity = service.entities.get(normalized);
 	if (!entity) {
-		throw new OperationalError(
-			`Entity ${normalized} is not allowed for service ${service.path}.`,
-		);
+		throw new OperationalError(`Entity ${normalized} is not allowed for service ${service.path}.`);
 	}
 	if (!entity.operations.has(operation)) {
 		throw new OperationalError(
@@ -477,6 +531,20 @@ function normalizeWriteValue(
 	version: ODataVersion,
 ): unknown {
 	if (value === null) return null;
+	if (type === 'int64') return int64Value(value);
+	if (type === 'datetime-local') {
+		if (version !== 'v2') throw new OperationalError('Edm.DateTime writes require OData V2.');
+		return `/Date(${v2DateTicks(`${localDateTime(value)}Z`)})/`;
+	}
+	if (type === 'datetimeoffset')
+		return version === 'v2'
+			? `/Date(${v2DateTicks(offsetDateTime(value))}+0000)/`
+			: offsetDateTime(value);
+	if (type === 'time')
+		return version === 'v2' ? clockDuration(timeDuration(value)) : timeDuration(value);
+	if (type === 'timeofday')
+		return version === 'v2' ? clockDuration(timeOfDay(value)) : timeOfDay(value);
+	if (type === 'decimal' && version === 'v4') return String(value);
 	if (type === 'datetime' && version === 'v2' && typeof value === 'string') {
 		return `/Date(${Date.parse(value)})/`;
 	}
@@ -504,7 +572,8 @@ export function validateWritePayload(
 	}
 	const body = recordValue(parsed, 'Data JSON');
 	const entries = Object.entries(body);
-	if (entries.length === 0) throw new OperationalError('Data JSON must contain at least one field.');
+	if (entries.length === 0)
+		throw new OperationalError('Data JSON must contain at least one field.');
 	const allowedFields = operation === 'create' ? entity.createFields : entity.updateFields;
 	const nullableFields =
 		operation === 'create' ? entity.nullableCreateFields : entity.nullableUpdateFields;
@@ -522,11 +591,15 @@ export function validateWritePayload(
 		const field = assertIdentifier(rawField, 'Data JSON field');
 		const type = allowedFields.get(field);
 		if (!type) {
-			throw new OperationalError(`Field ${field} is not allowed for ${operation} on ${entity.name}.`);
+			throw new OperationalError(
+				`Field ${field} is not allowed for ${operation} on ${entity.name}.`,
+			);
 		}
 		if (fieldValue === null) {
 			if (!nullableFields.has(field)) {
-				throw new OperationalError(`Field ${field} is not nullable for ${operation} on ${entity.name}.`);
+				throw new OperationalError(
+					`Field ${field} is not nullable for ${operation} on ${entity.name}.`,
+				);
 			}
 			normalized[field] = null;
 			continue;
@@ -594,14 +667,28 @@ export function normalizeHost(
 		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
 		throw new OperationalError('Host must be a valid absolute URL.');
 	}
-	if (url.username || url.password || url.search || url.hash || (url.pathname && url.pathname !== '/')) {
-		throw new OperationalError('Host cannot contain credentials, a path, query parameters, or a fragment.');
+	if (
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash ||
+		(url.pathname && url.pathname !== '/')
+	) {
+		throw new OperationalError(
+			'Host cannot contain credentials, a path, query parameters, or a fragment.',
+		);
 	}
 	if (url.protocol !== 'https:' && !(allowInsecureHttp && url.protocol === 'http:')) {
-		throw new OperationalError('Host must use HTTPS. Plain HTTP is only allowed for isolated tests.');
+		throw new OperationalError(
+			'Host must use HTTPS. Plain HTTP is only allowed for isolated tests.',
+		);
 	}
 	const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-	const metadataHosts = new Set(['169.254.169.254', 'metadata.google.internal', 'metadata.azure.com']);
+	const metadataHosts = new Set([
+		'169.254.169.254',
+		'metadata.google.internal',
+		'metadata.azure.com',
+	]);
 	if (metadataHosts.has(hostname)) {
 		throw new OperationalError('Cloud metadata endpoints are never allowed.');
 	}
@@ -630,7 +717,9 @@ function assertIntegerRange(value: unknown, label: string, minimum: number, maxi
 	}
 }
 
-export function validateGovernanceConfiguration(credentials: ODataGuardCredentials): ServicePolicies {
+export function validateGovernanceConfiguration(
+	credentials: ODataGuardCredentials,
+): ServicePolicies {
 	credentials.maxRequestBytes ??= 1_048_576;
 	credentials.maxWrites ??= 100;
 	normalizeHost(
@@ -648,6 +737,16 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 		throw new OperationalError('SAP Language must contain exactly two letters.');
 	}
 	const policies = parseServicePolicies(credentials.servicePoliciesJson);
+	assertIntegerRange(credentials.readRetryAttempts ?? 0, 'Read Retry Attempts', 0, 3);
+	assertIntegerRange(
+		credentials.maxReadElapsedMs ?? 60000,
+		'Maximum HTTP Elapsed Time',
+		1000,
+		300000,
+	);
+	assertIntegerRange(credentials.minRequestIntervalMs ?? 0, 'Minimum Request Interval', 0, 10000);
+	assertIntegerRange(credentials.maxHttpRequests ?? 200, 'Maximum HTTP Requests', 2, 1000);
+	assertIntegerRange(credentials.discoveryCacheTtlSeconds ?? 60, 'Discovery Cache TTL', 1, 300);
 	assertIntegerRange(credentials.maxRows, 'Maximum Rows', 1, 10_000);
 	assertIntegerRange(credentials.maxPages, 'Maximum Pages', 1, 100);
 	assertIntegerRange(credentials.maxUrlLength, 'Maximum URL Length', 512, 32_768);
@@ -656,12 +755,7 @@ export function validateGovernanceConfiguration(credentials: ODataGuardCredentia
 	assertIntegerRange(credentials.maxWrites, 'Maximum Writes', 1, 1000);
 	assertIntegerRange(credentials.requestTimeout, 'Request Timeout', 1000, 300_000);
 	if (credentials.allowServiceDiscovery === true) {
-		assertIntegerRange(
-			credentials.maxCatalogServices ?? 250,
-			'Maximum Catalog Services',
-			1,
-			1000,
-		);
+		assertIntegerRange(credentials.maxCatalogServices ?? 250, 'Maximum Catalog Services', 1, 1000);
 	}
 	if (credentials.allowAiMetadata === true && credentials.allowAiTool !== true) {
 		throw new OperationalError('AI metadata discovery requires Allow AI Tool Use as well.');

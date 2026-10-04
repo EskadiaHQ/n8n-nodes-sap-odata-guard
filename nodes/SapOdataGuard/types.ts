@@ -10,6 +10,11 @@ export type ODataValueType =
 	| 'decimal'
 	| 'boolean'
 	| 'date'
+	| 'int64'
+	| 'datetime-local'
+	| 'datetimeoffset'
+	| 'time'
+	| 'timeofday'
 	| 'datetime'
 	| 'guid';
 export type ODataWriteValueType = ODataValueType | 'object' | 'array';
@@ -35,6 +40,13 @@ export interface ODataGuardCredentials {
 	sapClient?: string;
 	sapLanguage?: string;
 	servicePoliciesJson: string;
+	cacheIdentity?: string;
+	allowDiscoveryCache?: boolean;
+	discoveryCacheTtlSeconds?: number;
+	readRetryAttempts?: number;
+	maxReadElapsedMs?: number;
+	minRequestIntervalMs?: number;
+	maxHttpRequests?: number;
 	allowServiceDiscovery?: boolean;
 	maxCatalogServices?: number;
 	allowPrivateNetwork?: boolean;
@@ -75,6 +87,7 @@ export interface EntityPolicy {
 	name: string;
 	operations: Set<EntityOperation>;
 	fields: string[];
+	outputTypes: Map<string, ODataValueType>;
 	keyFields: Map<string, ODataValueType>;
 	filterFields: Map<string, ODataValueType>;
 	orderByFields: Set<string>;

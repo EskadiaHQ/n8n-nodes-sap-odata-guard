@@ -20,23 +20,19 @@ function attribute(source: string, name: string): string | undefined {
 }
 
 function valueType(edmType: string): ODataValueType | undefined {
-	const type = edmType.replace(/^Collection\((.*)\)$/, '$1');
+	const type = edmType; // Collections require a separate policy; never treat them as scalars.
 	if (type === 'Edm.String') return 'string';
 	if (type === 'Edm.Boolean') return 'boolean';
 	if (type === 'Edm.Guid') return 'guid';
 	if (type === 'Edm.Date') return 'date';
-	if (['Edm.DateTime', 'Edm.DateTimeOffset'].includes(type)) return 'datetime';
+	if (type === 'Edm.DateTime') return 'datetime-local';
+	if (type === 'Edm.DateTimeOffset') return 'datetimeoffset';
+	if (type === 'Edm.Int64') return 'int64';
+	if (type === 'Edm.Time') return 'time';
+	if (type === 'Edm.TimeOfDay') return 'timeofday';
 	if (type === 'Edm.Decimal') return 'decimal';
 	if (
-		[
-			'Edm.Byte',
-			'Edm.SByte',
-			'Edm.Int16',
-			'Edm.Int32',
-			'Edm.Int64',
-			'Edm.Single',
-			'Edm.Double',
-		].includes(type)
+		['Edm.Byte', 'Edm.SByte', 'Edm.Int16', 'Edm.Int32', 'Edm.Single', 'Edm.Double'].includes(type)
 	) {
 		return 'number';
 	}
@@ -48,6 +44,8 @@ function parseEntityTypes(xml: string): Map<string, MetadataEntityType> {
 	const pattern = /<(?:\w+:)?EntityType\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?EntityType>/gi;
 	let match: RegExpExecArray | null;
 	while ((match = pattern.exec(xml)) !== null) {
+		// Inherited properties and keys need a dedicated metadata resolver.
+		if (attribute(match[1], 'BaseType')) continue;
 		const rawName = attribute(match[1], 'Name');
 		if (!rawName) continue;
 		let name: string;
@@ -84,10 +82,20 @@ function parseEntityTypes(xml: string): Map<string, MetadataEntityType> {
 			try {
 				keys.push(assertIdentifier(rawKey, 'Metadata Key'));
 			} catch {
-				// Ignore keys that cannot be represented by the policy grammar.
+				keys.push(''); // A partial composite key must never enable Get.
 			}
 		}
-		if (properties.length > 0) result.set(name, { name, properties, keys });
+		if (properties.length > 0) {
+			const schemaPrefix = xml.slice(0, match.index);
+			const schemas = [...schemaPrefix.matchAll(/<(?:\w+:)?Schema\b([^>]*)>/gi)];
+			const schema = schemas[schemas.length - 1]?.[1] ?? '';
+			const namespace = attribute(schema, 'Namespace');
+			const alias = attribute(schema, 'Alias');
+			const entity = { name, properties, keys };
+			const qualified = namespace ? `${namespace}.${name}` : name;
+			result.set(qualified, entity);
+			if (alias) result.set(`${alias}.${name}`, entity);
+		}
 	}
 	return result;
 }
@@ -103,7 +111,10 @@ function parseEntitySets(xml: string): Array<{ name: string; typeName: string }>
 		try {
 			result.push({
 				name: assertIdentifier(rawName, 'Metadata EntitySet'),
-				typeName: assertIdentifier(rawType.split('.').pop(), 'Metadata EntityType reference'),
+				typeName: rawType
+					.split('.')
+					.map((part) => assertIdentifier(part, 'Metadata EntityType reference'))
+					.join('.'),
 			});
 		} catch {
 			// Ignore entity sets that cannot be represented by the policy grammar.
@@ -134,10 +145,10 @@ export function readOnlyPolicyTemplateFromMetadata(
 		const typeByField = new Map(
 			entityType.properties.map((property) => [property.name, property.type] as const),
 		);
+		const completeKeys =
+			entityType.keys.length > 0 && entityType.keys.every((key) => typeByField.has(key));
 		const keyFields = Object.fromEntries(
-			entityType.keys
-				.filter((key) => typeByField.has(key))
-				.map((key) => [key, typeByField.get(key)]),
+			(completeKeys ? entityType.keys : []).map((key) => [key, typeByField.get(key)]),
 		);
 		const filterFields = Object.fromEntries(
 			entityType.properties.map((property) => [property.name, property.type]),
@@ -145,6 +156,7 @@ export function readOnlyPolicyTemplateFromMetadata(
 		entities[entitySet.name] = {
 			operations: Object.keys(keyFields).length > 0 ? ['get', 'getMany'] : ['getMany'],
 			fields,
+			outputTypes: Object.fromEntries(typeByField),
 			keyFields,
 			filterFields,
 			orderByFields: fields,

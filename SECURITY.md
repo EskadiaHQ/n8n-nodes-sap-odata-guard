@@ -2,7 +2,7 @@
 
 ## Status
 
-Version `0.3.0` is a prerelease for non-production evaluation. Create, Update, and Delete are
+Version `0.4.0-beta.1` is a candidate for non-production evaluation. Create, Update, and Delete are
 implemented through OData only. Functions/actions, batch, and webhook operations are not
 implemented and cannot be enabled through policy JSON.
 
@@ -28,6 +28,14 @@ Missing policy means denied. The node also:
 - keeps AI Tool use disabled by default and requires separate opt-ins for metadata and writes;
 - keeps service-catalog discovery disabled by default, bounded, same-origin, and unavailable to AI Tool nodes;
 - redacts known credential secrets from request errors.
+
+GET resilience is opt-in and bounded per input item; mutations are never automatically retried.
+Discovery caching is separately opt-in, credential-isolated, worker-local, size/entry/TTL bounded,
+and bypassed by connection tests. It stores only catalog/metadata responses, never entity data or
+CSRF material. Known secrets are hashed into cache keys rather than stored as readable keys.
+Forced refresh invalidates older in-flight discovery so it cannot repopulate a stale cache entry.
+Errors expose selected bounded business details without full inner-error stacks or transport headers.
+Typed conversion never infers numbers from strings and refuses unsafe integer input before HTTP.
 
 ## Reporting
 

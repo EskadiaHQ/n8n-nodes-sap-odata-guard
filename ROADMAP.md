@@ -16,6 +16,10 @@
 
 ## Required before stable release
 
+The 0.4 candidate adds precise EDM types, structured errors, GET resilience, and discovery caching.
+Successful-response `sap-message` warnings, actions/functions, batch, and subscriptions remain
+separate future contracts. Cache coordination and throttling across workers are not implemented.
+
 - Complete acceptance against SAP OData V4 and every additional n8n version claimed as supported.
 - Add controlled OAuth2 acceptance against an SAP/BTP identity provider.
 - Exercise server-driven V2 and V4 pagination with real continuation links.

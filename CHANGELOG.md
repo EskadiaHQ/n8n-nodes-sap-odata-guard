@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.0-beta.1] - 2026-10-04
+
+### Added
+
+- Explicit Int64, local datetime, datetime offset, time, and time-of-day policy types; precise EDM
+  metadata templates and opt-in output normalization through approved `outputTypes`.
+- Credential-bounded GET retries, Retry-After, exponential backoff, request pacing, and HTTP call budgets.
+- Optional isolated metadata/catalog cache with TTL, size/entry bounds, coalescing, and forced refresh.
+- Sanitized structured SAP business errors and bounded Continue On Fail diagnostic output.
+- Node interface 1.3 while preserving interfaces 1, 1.1, and 1.2.
+
+### Fixed
+
+- Preserve signed Int64 values as strings and use correct version-specific literal suffixes.
+- Negotiate V4 IEEE754Compatible JSON for precise Decimal/Int64 reads and writes.
+- Refuse unsafe integer input and V2 sub-millisecond date truncation.
+- Resolve metadata types by namespace/alias and refuse partial composite-key Get templates.
+- Ignore primitive collections and unresolved inherited entity types when generating scalar policies.
+
+### Safety and compatibility
+
+- Retry, pacing, discovery caching, and date output conversion are disabled by default.
+- Connection tests always contact SAP. POST, PATCH, and DELETE are never automatically retried.
+- Existing `datetime` policy behavior remains available; generated policies use explicit EDM types.
+- Inspired by review of `sseegebarth/n8n-nodes-sap-odata` commit `1580e30`; implementations retain
+  Guard's credential policies and use no automatic numeric-string conversion.
+
 ## [0.3.1] - 2026-08-24
 
 ### Fixed
