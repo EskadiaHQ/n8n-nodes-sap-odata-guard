@@ -35,8 +35,7 @@ export const commonCredentialProperties: INodeProperties[] = [
 		placeholder:
 			'{"/sap/opu/odata/sap/API_BUSINESS_PARTNER":{"version":"v2","allowMetadata":false,"entities":{"A_BusinessPartner":{"operations":["getMany"],"fields":["BusinessPartner"],"keyFields":{},"filterFields":{"BusinessPartner":"string"},"orderByFields":["BusinessPartner"]}}}}',
 		description:
-			'Deny-by-default allowlist for service paths, protocol versions, entity sets, read/write operations, fields, keys, filters, sorting, and concurrency rules',
-		required: true,
+			'Optional restrictions. Leave empty to discover entities, fields, types, and keys automatically from service metadata and use SAP user permissions. A configured policy remains deny-by-default.',
 	},
 	{
 		displayName: 'Allow SAP Service Catalog Discovery',
@@ -44,7 +43,7 @@ export const commonCredentialProperties: INodeProperties[] = [
 		type: 'boolean',
 		default: false,
 		description:
-			'Whether this credential may list the OData V2 services visible to the SAP user through Gateway CATALOGSERVICE. Discovery does not grant execution access; Service Policies JSON remains authoritative.',
+			'Whether this credential may list the OData V2 services visible to the SAP user through Gateway CATALOGSERVICE. Configured Service Policies JSON still restricts execution.',
 	},
 	{
 		displayName: 'Maximum Catalog Services',

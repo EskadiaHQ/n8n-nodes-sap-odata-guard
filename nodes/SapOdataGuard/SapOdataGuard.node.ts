@@ -22,6 +22,7 @@ import {
 	buildMutationUrl,
 	projectItem,
 	requestCollection,
+	requestHostConnection,
 	requestMetadata,
 	requestMutation,
 	requestServiceCatalog,
@@ -32,7 +33,7 @@ import { normalizeOutputDates } from './scalars';
 import { readOnlyPolicyTemplateFromMetadata } from './catalog';
 import {
 	entityPolicyFor,
-	servicePolicyFor,
+	hasServicePolicies,
 	validateGovernanceConfiguration,
 	validateIfMatch,
 	validateWritePayload,
@@ -47,6 +48,7 @@ import {
 	selectedFieldsFromInput,
 	writePayloadFromUi,
 } from './query';
+import { resolveServicePolicy } from './policy';
 import { enforceAiToolByteLimit, resolveAiToolPolicy } from './toolPolicy';
 import type {
 	EntityPolicy,
@@ -106,6 +108,17 @@ function cacheIdentity(node: INode, authentication: string): string | undefined 
 	return id ? `${type}:${id}` : undefined;
 }
 
+function loadOptionsRequest(context: ILoadOptionsFunctions): ODataHttpRequest {
+	return context.getCurrentNodeParameter('authentication') === 'oauth2'
+		? async (options) =>
+				await context.helpers.httpRequestWithAuthentication.call(
+					context,
+					'sapOdataGuardOAuth2Api',
+					options,
+				)
+		: async (options) => await context.helpers.httpRequest(options);
+}
+
 async function currentEntityPolicy(
 	context: ILoadOptionsFunctions,
 ): Promise<EntityPolicy | undefined> {
@@ -121,7 +134,12 @@ async function currentEntityPolicy(
 	}
 	const credentials = await loadCredentials(context);
 	const policies = validateGovernanceConfiguration(credentials);
-	const service = servicePolicyFor(servicePath, policies);
+	const { service } = await resolveServicePolicy(
+		credentials,
+		policies,
+		servicePath,
+		loadOptionsRequest(context),
+	);
 	return entityPolicyFor(service, entitySet, operation as EntityOperation);
 }
 
@@ -137,11 +155,11 @@ export class SapOdataGuard implements INodeType {
 		version: [1, 1.1, 1.2, 1.3],
 		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
 		description:
-			'Discover visible SAP services and read or write approved OData V2/V4 data with deny-by-default guardrails',
+			'Read and write SAP OData V2/V4 using automatic metadata discovery and optional credential policies',
 		usableAsTool: {
 			replacements: {
 				description:
-					'Give an AI agent bounded access to explicitly approved SAP OData services, entities, operations, and fields',
+					'Give an AI agent SAP OData access under optional credential policies and explicit AI limits',
 			},
 		},
 		defaults: { name: 'Logali SAP OData Guard' },
@@ -283,7 +301,7 @@ export class SapOdataGuard implements INodeType {
 				typeOptions: { loadOptionsMethod: 'getAllowedServices' },
 				default: '',
 				description:
-					'Only service paths present in the selected credential policy are listed. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
+					'Enter a service path as an ID, or choose a policy/catalog service. With an empty policy, entities and fields come from metadata. Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>.',
 				displayOptions: {
 					show: { resource: ['connection', 'metadata', 'entity'] },
 				},
@@ -652,7 +670,19 @@ export class SapOdataGuard implements INodeType {
 		loadOptions: {
 			async getAllowedServices(this: ILoadOptionsFunctions): Promise<INodePropertyOptions[]> {
 				const credentials = await loadCredentials(this);
-				return [...validateGovernanceConfiguration(credentials).values()].map((service) => ({
+				const policies = validateGovernanceConfiguration(credentials);
+				if (!hasServicePolicies(credentials)) {
+					if (credentials.allowServiceDiscovery === true) {
+						const catalog = await requestServiceCatalog(loadOptionsRequest(this), credentials);
+						return catalog.services.map((service) => ({
+							name: service.title,
+							value: service.servicePath,
+						}));
+					}
+					const path = String(this.getCurrentNodeParameter('servicePath') ?? '');
+					return path ? [{ name: path, value: path }] : [];
+				}
+				return [...policies.values()].map((service) => ({
 					name: `${service.path} (${service.version.toUpperCase()})`,
 					value: service.path,
 				}));
@@ -675,7 +705,7 @@ export class SapOdataGuard implements INodeType {
 				const result = await requestServiceCatalog(httpRequest, credentials);
 				const policies = validateGovernanceConfiguration(credentials);
 				return result.services.map((service) => ({
-					name: `${policies.has(service.servicePath) ? '✓ Allowed' : 'Discovered'} · ${service.title} (${service.technicalName})`,
+					name: `${!hasServicePolicies(credentials) || policies.has(service.servicePath) ? '✓ Allowed' : 'Discovered'} · ${service.title} (${service.technicalName})`,
 					value: service.servicePath,
 					description: service.description ?? service.servicePath,
 				}));
@@ -685,7 +715,13 @@ export class SapOdataGuard implements INodeType {
 				const policies = validateGovernanceConfiguration(credentials);
 				const path = String(this.getCurrentNodeParameter('servicePath') ?? '');
 				if (!path) return [];
-				return [...servicePolicyFor(path, policies).entities.values()].map((entity) => ({
+				const { service } = await resolveServicePolicy(
+					credentials,
+					policies,
+					path,
+					loadOptionsRequest(this),
+				);
+				return [...service.entities.values()].map((entity) => ({
 					name: entity.name,
 					value: entity.name,
 					description: `Allowed operations: ${[...entity.operations].join(', ')}`,
@@ -737,7 +773,6 @@ export class SapOdataGuard implements INodeType {
 					};
 					const policies = validateGovernanceConfiguration(credentials);
 					const service = policies.values().next().value;
-					if (!service) throw new OperationalError('No allowed service is configured.');
 					const request: ODataHttpRequest = async (options) =>
 						// ICredentialTestFunctions exposes the legacy request adapter in this SDK.
 						// eslint-disable-next-line @n8n/community-nodes/no-deprecated-workflow-functions
@@ -750,6 +785,14 @@ export class SapOdataGuard implements INodeType {
 							timeout: options.timeout,
 							rejectUnauthorized: !options.skipSslCertificateValidation,
 						});
+					if (!service) {
+						await requestHostConnection(request, credentials);
+						return {
+							status: 'OK',
+							message:
+								'Host responded successfully. Run Connection → Test Connection in the node to verify the selected OData service.',
+						};
+					}
 					await requestMetadata(request, credentials, service.path, true);
 					return {
 						status: 'OK',
@@ -788,6 +831,10 @@ export class SapOdataGuard implements INodeType {
 				const policies = validateGovernanceConfiguration(credentials);
 				const aiPolicy = resolveAiToolPolicy(this.getNode().type, resource, operation, credentials);
 				const startedAt = Date.now();
+				const makeMetadata = (...args: Parameters<typeof metadataObject>) => ({
+					...metadataObject(...args),
+					policyApplied: hasServicePolicies(credentials),
+				});
 				const httpRequest: ODataHttpRequest =
 					authentication === 'oauth2'
 						? async (options) =>
@@ -809,7 +856,8 @@ export class SapOdataGuard implements INodeType {
 							const allowedPolicy = policies.get(discovered.servicePath);
 							const json: IDataObject = {
 								...discovered,
-								allowedByCredential: allowedPolicy !== undefined,
+								allowedByCredential:
+									!hasServicePolicies(credentials) || allowedPolicy !== undefined,
 								allowedEntityCount: allowedPolicy?.entities.size ?? 0,
 								_odata: {
 									operation,
@@ -870,14 +918,23 @@ export class SapOdataGuard implements INodeType {
 				}
 
 				const servicePath = this.getNodeParameter('servicePath', itemIndex) as string;
-				const service = servicePolicyFor(servicePath, policies);
+				const { service, metadata: automaticMetadata } = await resolveServicePolicy(
+					credentials,
+					policies,
+					servicePath,
+					httpRequest,
+					resource === 'connection' ||
+						this.getNodeParameter('refreshDiscovery', itemIndex, false) === true,
+				);
 
 				if (resource === 'connection') {
-					const result = await requestMetadata(httpRequest, credentials, service.path, true);
+					const result =
+						automaticMetadata ??
+						(await requestMetadata(httpRequest, credentials, service.path, true));
 					const json: IDataObject = {
 						connected: true,
 						metadataBytes: result.serializedBytes,
-						_odata: metadataObject(service.path, operation, service.version, startedAt),
+						_odata: makeMetadata(service.path, operation, service.version, startedAt),
 					};
 					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
 					outputItems.push({ json, pairedItem: { item: itemIndex } });
@@ -890,23 +947,25 @@ export class SapOdataGuard implements INodeType {
 							`Metadata output is disabled by the policy for ${service.path}.`,
 						);
 					}
-					const result = await requestMetadata(
-						httpRequest,
-						credentials,
-						service.path,
-						this.getNodeParameter('refreshDiscovery', itemIndex, false) === true,
-					);
+					const result =
+						automaticMetadata ??
+						(await requestMetadata(
+							httpRequest,
+							credentials,
+							service.path,
+							this.getNodeParameter('refreshDiscovery', itemIndex, false) === true,
+						));
 					const json: IDataObject =
 						operation === 'getMetadata'
 							? {
 									metadataXml: result.xml,
-									_odata: metadataObject(service.path, operation, service.version, startedAt, {
+									_odata: makeMetadata(service.path, operation, service.version, startedAt, {
 										metadataBytes: result.serializedBytes,
 									}),
 								}
 							: {
 									entitySets: allowedEntitySetsFromMetadata(result.xml, service.entities),
-									_odata: metadataObject(service.path, operation, service.version, startedAt),
+									_odata: makeMetadata(service.path, operation, service.version, startedAt),
 								};
 					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
 					outputItems.push({ json, pairedItem: { item: itemIndex } });
@@ -998,13 +1057,7 @@ export class SapOdataGuard implements INodeType {
 							responseBytes: result.serializedBytes,
 						};
 						if (result.etag) extra.etag = result.etag;
-						json._odata = metadataObject(
-							service.path,
-							operation,
-							service.version,
-							startedAt,
-							extra,
-						);
+						json._odata = makeMetadata(service.path, operation, service.version, startedAt, extra);
 					}
 					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
 					outputItems.push({ json, pairedItem: { item: itemIndex } });
@@ -1034,13 +1087,7 @@ export class SapOdataGuard implements INodeType {
 							responseBytes: result.serializedBytes,
 						};
 						if (result.etag) extra.etag = result.etag;
-						json._odata = metadataObject(
-							service.path,
-							operation,
-							service.version,
-							startedAt,
-							extra,
-						);
+						json._odata = makeMetadata(service.path, operation, service.version, startedAt, extra);
 					}
 					enforceAiToolByteLimit(json, aiPolicy.maxBytes);
 					outputItems.push({ json, pairedItem: { item: itemIndex } });
@@ -1079,7 +1126,7 @@ export class SapOdataGuard implements INodeType {
 					rowLimit,
 				);
 				const rows = result.items.map((item) => projectOutput(item, fields));
-				const executionMetadata = metadataObject(
+				const executionMetadata = makeMetadata(
 					service.path,
 					operation,
 					service.version,

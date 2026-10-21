@@ -717,6 +717,10 @@ function assertIntegerRange(value: unknown, label: string, minimum: number, maxi
 	}
 }
 
+export function hasServicePolicies(credentials: ODataGuardCredentials): boolean {
+	return String(credentials.servicePoliciesJson ?? '').trim().length > 0;
+}
+
 export function validateGovernanceConfiguration(
 	credentials: ODataGuardCredentials,
 ): ServicePolicies {
@@ -736,7 +740,9 @@ export function validateGovernanceConfiguration(
 	if (credentials.sapLanguage && !/^[A-Za-z]{2}$/.test(credentials.sapLanguage)) {
 		throw new OperationalError('SAP Language must contain exactly two letters.');
 	}
-	const policies = parseServicePolicies(credentials.servicePoliciesJson);
+	const policies = hasServicePolicies(credentials)
+		? parseServicePolicies(credentials.servicePoliciesJson!)
+		: new Map<string, ServicePolicy>();
 	assertIntegerRange(credentials.readRetryAttempts ?? 0, 'Read Retry Attempts', 0, 3);
 	assertIntegerRange(
 		credentials.maxReadElapsedMs ?? 60000,

@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.0-beta.2] - 2026-10-21
+
+### Changed
+
+- Make Service Policies JSON optional. Empty or omitted values derive the selected service's
+  V2/V4 schema from metadata, including entities, scalar fields, keys, nullability and SAP write flags.
+- Keep configured policies deny-by-default and reject malformed/incomplete JSON without fallback.
+- Populate entity and field selectors from live metadata in automatic mode; retain catalog opt-in.
+- Keep typed writes, CSRF, ETags, AI opt-ins and operational limits in both modes. Report whether
+  a credential policy was applied and scope a policy-free credential test to host connectivity.
+
 ## [0.4.0-beta.1] - 2026-10-04
 
 ### Added
