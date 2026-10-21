@@ -3,22 +3,27 @@
 Security-first n8n community node for discovering visible SAP services and governing reads and
 writes through SAP OData V2 and V4.
 
-> Status: candidate `0.4.0-beta.1` for controlled, non-production evaluation.
+> Status: candidate `0.4.0-beta.2` for controlled, non-production evaluation.
 
 ## Why Guard?
 
-This node is not an unrestricted OData URL builder. Its runtime supports reusable OData mechanics,
-while each credential defines the exact subset a workflow may use. A service or entity does not
-need new TypeScript code when it already fits the implemented OData contract, but it must be added
-to the credential policy before it becomes usable.
+The node supports reusable OData mechanics and optional credential restrictions. Leave
+**Service Policies JSON** empty to load the selected service's entities, fields, EDM types, keys,
+and nullable fields automatically from live `$metadata`. SAP authorizes every data request using
+the configured user or OAuth client. A service or entity needs no new TypeScript code when it fits
+the implemented OData contract.
+
+For a restricted credential, fill **Service Policies JSON** with the exact subset the workflow
+may use. Existing policies remain authoritative and deny everything they do not list. Invalid
+JSON, `{}`, and incomplete policies are errors; they never activate automatic mode.
 
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.4.0-beta.1` implements service-catalog discovery, connection
+- **Implemented capability**: version `0.4.0-beta.2` implements service-catalog discovery, connection
   checks, metadata, Get, Get Many, Create, Update, and Delete. Policy JSON cannot unlock actions,
   batches, or triggers.
-- **Credential authorization**: within those implemented operations, anything absent from the policy is
-  denied by default.
+- **Credential authorization**: a configured policy denies anything absent from it. An empty field
+  uses the selected service's metadata and SAP user permissions instead of a handwritten allowlist.
 
 Programmatic node style is intentional: one execution can require policy validation, version-aware
 filter construction, several dependent pagination requests, same-origin checks, response
@@ -87,18 +92,33 @@ triggers another mutation.
 - **Entity → Update**: sends only policy-approved fields with `PATCH` and mandatory `If-Match`.
 - **Entity → Delete**: sends `DELETE` to an exact structured key with mandatory `If-Match`.
 
-Service, entity, output, filter, sort, and write-field choices are loaded directly from the
-selected credential policy. Create and Update accept either a complete JSON object or the visual
+Entity, output, filter, sort, and write-field choices come from the configured policy, or automatically
+from service metadata when the policy field is empty. Enter the service path as an ID/expression;
+enabling catalog discovery also populates the service selector. Create and Update accept either a complete JSON object or the visual
 field mapper; mapped values use JSON literals so their number, boolean, null, object, and array
 types remain unambiguous.
 
 Catalog discovery is a separate credential opt-in. It calls SAP Gateway
 `/sap/opu/odata/IWFND/CATALOGSERVICE;v=2/ServiceCollection`, so the SAP user must be authorized for
-that catalog service. Seeing a service does not make it executable: an administrator reviews the
-generated template, removes unnecessary entities and fields, and then merges the approved subset
-into **Service Policies JSON**.
+that catalog service. When a policy is configured, seeing a service does not add it to the allowlist.
+The generated template can be reviewed and merged into **Service Policies JSON** to restrict access.
 
 ## Credential policy
+
+This field is optional. Empty, omitted, or whitespace-only values select automatic mode. In that
+mode the node detects V2/V4 from metadata, uses the supported primitive fields and complete keys,
+and honors SAP `creatable`, `updatable`, and `deletable` flags. Unknown scalar types, collections,
+and unresolved inherited entity types are not inferred. Unsupported metadata causes an explicit
+error rather than an unrestricted request. SAP remains responsible for business authorization and
+required create inputs. Update/Delete still require an exact ETag; wildcard `If-Match` requires an
+explicit policy. CSRF, TLS, URL checks, and request/row/byte limits apply in both modes.
+
+Without a policy, the credential's connection test probes the configured Host only; its message
+states that service access still needs testing. Run **Connection → Test Connection** in a node
+with the exact service path to validate OData access. Runtime output reports `policyApplied: false`
+in automatic mode and `true` when a configured policy was applied.
+
+Example of optional restrictions:
 
 ```json
 {
@@ -163,8 +183,8 @@ Update, or Delete requires **Allow AI Write Operations**. Normal and tool execut
 subject to the same service/entity/operation/field policies; the tool also receives its own row,
 byte, and write-count caps.
 
-Service-catalog enumeration is never available to the AI Tool variant. A human administrator must
-discover services and approve the resulting policy.
+Service-catalog enumeration is never available to the AI Tool variant. AI opt-ins and caps apply
+in both automatic and explicitly restricted modes.
 
 ## Development
 

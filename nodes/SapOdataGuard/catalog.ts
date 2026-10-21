@@ -1,11 +1,14 @@
 import { OperationalError, type IDataObject } from 'n8n-workflow';
 
-import { assertIdentifier, normalizeServicePath } from './governance';
-import type { ODataValueType, ODataVersion } from './types';
+import { assertIdentifier, normalizeServicePath, parseServicePolicies } from './governance';
+import type { ODataValueType, ODataVersion, ServicePolicy } from './types';
 
 interface MetadataProperty {
 	name: string;
 	type: ODataValueType;
+	nullable: boolean;
+	creatable: boolean;
+	updatable: boolean;
 }
 
 interface MetadataEntityType {
@@ -67,6 +70,9 @@ function parseEntityTypes(xml: string): Map<string, MetadataEntityType> {
 				properties.push({
 					name: assertIdentifier(rawPropertyName, 'Metadata Property'),
 					type,
+					nullable: attribute(propertyMatch[1], 'Nullable') !== 'false',
+					creatable: attribute(propertyMatch[1], 'sap:creatable') !== 'false',
+					updatable: attribute(propertyMatch[1], 'sap:updatable') !== 'false',
 				});
 			} catch {
 				// Ignore metadata members that cannot be represented safely by the node policy.
@@ -100,8 +106,65 @@ function parseEntityTypes(xml: string): Map<string, MetadataEntityType> {
 	return result;
 }
 
-function parseEntitySets(xml: string): Array<{ name: string; typeName: string }> {
-	const result: Array<{ name: string; typeName: string }> = [];
+/** Build the schema for a credential with no user-supplied restrictions. SAP still authorizes requests. */
+export function automaticServicePolicyFromMetadata(
+	servicePath: string,
+	xml: string,
+): ServicePolicy {
+	const edmx = /<(?:\w+:)?Edmx\b([^>]*)>/i.exec(xml);
+	const dataServices = /<(?:\w+:)?DataServices\b([^>]*)>/i.exec(xml);
+	const version: ODataVersion | undefined =
+		attribute(edmx?.[1] ?? '', 'Version') === '4.0'
+			? 'v4'
+			: /^2(?:\.0)?$/.test(attribute(dataServices?.[1] ?? '', 'DataServiceVersion') ?? '')
+				? 'v2'
+				: undefined;
+	if (!version) {
+		throw new OperationalError(
+			'Cannot detect OData V2/V4 from service metadata. Configure an explicit service policy.',
+		);
+	}
+	const path = normalizeServicePath(servicePath);
+	const template = readOnlyPolicyTemplateFromMetadata(path, version, xml);
+	const service = parseServicePolicies(JSON.stringify(template.policy)).get(path)!;
+	const types = parseEntityTypes(xml);
+	for (const set of parseEntitySets(xml)) {
+		const entity = service.entities.get(set.name);
+		const type = types.get(set.typeName);
+		if (!entity || !type) continue;
+		entity.createFields = new Map(
+			type.properties
+				.filter((property) => property.creatable)
+				.map((property) => [property.name, property.type]),
+		);
+		entity.updateFields = new Map(
+			type.properties
+				.filter((property) => property.updatable && !entity.keyFields.has(property.name))
+				.map((property) => [property.name, property.type]),
+		);
+		entity.nullableCreateFields = new Set(
+			type.properties.filter((property) => property.nullable).map((property) => property.name),
+		);
+		entity.nullableUpdateFields = new Set(
+			[...entity.nullableCreateFields].filter((field) => entity.updateFields.has(field)),
+		);
+		if (set.creatable && entity.createFields.size > 0) entity.operations.add('create');
+		if (entity.keyFields.size > 0) {
+			if (set.updatable && entity.updateFields.size > 0) entity.operations.add('update');
+			if (set.deletable) entity.operations.add('delete');
+		}
+	}
+	return service;
+}
+
+function parseEntitySets(xml: string): Array<{
+	name: string;
+	typeName: string;
+	creatable: boolean;
+	updatable: boolean;
+	deletable: boolean;
+}> {
+	const result: ReturnType<typeof parseEntitySets> = [];
 	const pattern = /<(?:\w+:)?EntitySet\b([^>]*)\/?\s*>/gi;
 	let match: RegExpExecArray | null;
 	while ((match = pattern.exec(xml)) !== null) {
@@ -111,6 +174,9 @@ function parseEntitySets(xml: string): Array<{ name: string; typeName: string }>
 		try {
 			result.push({
 				name: assertIdentifier(rawName, 'Metadata EntitySet'),
+				creatable: attribute(match[1], 'sap:creatable') !== 'false',
+				updatable: attribute(match[1], 'sap:updatable') !== 'false',
+				deletable: attribute(match[1], 'sap:deletable') !== 'false',
 				typeName: rawType
 					.split('.')
 					.map((part) => assertIdentifier(part, 'Metadata EntityType reference'))

@@ -2,16 +2,27 @@
 
 Logali SAP OData Guard separates **code capability** from **credential authorization**.
 
+**Service Policies JSON is optional.** Leave it empty to derive the selected service's schema from
+live `$metadata`: version, entities, supported primitive fields, types, complete keys, nullable fields,
+and SAP write flags. SAP user permissions authorize reads and writes. Metadata discovery does not
+guarantee that the user can access business data. TLS, CSRF, exact ETags, input validation, and
+credential resource limits continue to apply. Automatic output reports `policyApplied: false`.
+
+When the field contains a policy, the restrictions below apply exactly as before. Whitespace-only
+and omitted values are treated as empty; invalid JSON, `{}`, and invalid policy objects fail instead
+of enabling automatic mode. The automatic resolver shares the scalar metadata parser's limitations:
+collections, unsupported scalar types, and unresolved inheritance need an explicit supported policy.
+
 | Question | Answer |
 |---|---|
-| Must a new SAP service be programmed into the node? | No, if it uses the implemented V2/V4 CRUD contract. Add its exact path and policy to the credential. |
-| Must a new entity set be programmed into the node? | No. Add the exact entity name, operations, fields, keys, filters, and sorting policy. |
+| Must a new SAP service be programmed into the node? | No, if it uses the implemented V2/V4 CRUD contract. Enter its path in the node; metadata is automatic when no policy is configured. |
+| Must a new entity set be programmed into the node? | No. Metadata supplies supported entities automatically, or a configured policy supplies the restricted set. |
 | Can policy JSON enable create, update, or delete? | Yes, only for the exact entity and fields listed in `createFields` or `updateFields`; Delete requires an exact approved key. |
-| Can policy JSON enable actions, batches, or triggers? | No. Those capabilities do not exist in version 0.4.0-beta.1. |
-| What happens when a service, entity, operation, or field is absent? | Execution fails before sending that data request. |
+| Can policy JSON enable actions, batches, or triggers? | No. Those capabilities do not exist in version 0.4.0-beta.2. |
+| What happens when a service, entity, operation, or field is absent from a configured policy? | Execution fails before sending that data request. |
 | Can a workflow replace a required row filter? | No. Required filters are generated from the credential and joined with `AND`. |
 | Can server pagination drop a required filter? | No. Continuation links cannot change protected query parameters. |
-| Does catalog discovery grant access to a service? | No. It only shows services visible to the SAP user and can generate a reviewable read-only policy template. |
+| Does catalog discovery override a configured policy? | No. It lists visible services and can generate a reviewable read-only template. In automatic mode, SAP permissions authorize service access. |
 
 ## Catalog discovery and authorization
 
@@ -19,7 +30,7 @@ Catalog discovery has its own credential switch and result limit. It queries SAP
 `CATALOGSERVICE`, marks services already present in the credential policy, and can derive a
 read-only template from live metadata. The template is not applied automatically.
 
-To authorize a discovered service, an administrator must:
+To authorize a discovered service within an explicitly restricted credential, an administrator must:
 
 1. grant the SAP user runtime access to the activated OData service and its business data;
 2. review the generated template and remove every entity, field, filter, and sort option the

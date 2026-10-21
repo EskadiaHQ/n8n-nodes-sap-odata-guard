@@ -39,7 +39,9 @@ export interface ODataGuardCredentials {
 	oauthTokenData?: unknown;
 	sapClient?: string;
 	sapLanguage?: string;
-	servicePoliciesJson: string;
+	servicePoliciesJson?: string;
+	/** Runtime protocol hints from metadata; never persisted to the credential. */
+	resolvedServiceVersions?: Record<string, ODataVersion>;
 	cacheIdentity?: string;
 	allowDiscoveryCache?: boolean;
 	discoveryCacheTtlSeconds?: number;
@@ -147,7 +149,7 @@ export interface ODataExecutionMetadata extends IDataObject {
 	truncated?: boolean;
 	requiredFilterCount?: number;
 	durationMs: number;
-	policyApplied: true;
+	policyApplied: boolean;
 }
 
 export interface ODataMutationResult {

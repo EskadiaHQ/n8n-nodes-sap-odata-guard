@@ -2,7 +2,7 @@
 
 ## Status
 
-Version `0.4.0-beta.1` is a candidate for non-production evaluation. Create, Update, and Delete are
+Version `0.4.0-beta.2` is a candidate for non-production evaluation. Create, Update, and Delete are
 implemented through OData only. Functions/actions, batch, and webhook operations are not
 implemented and cannot be enabled through policy JSON.
 
@@ -11,10 +11,15 @@ implemented and cannot be enabled through policy JSON.
 Logali SAP OData Guard uses two independent boundaries:
 
 1. the SAP communication user or OAuth client must have least privilege in SAP;
-2. the n8n credential must explicitly allow each service, entity, operation, field, filter field,
-   sort field, and key field.
+2. an optional n8n credential policy can explicitly restrict each service, entity, operation, field,
+   filter field, sort field, and key field.
 
-Missing policy means denied. The node also:
+An empty **Service Policies JSON** uses metadata-driven schema discovery and the SAP user's
+permissions. It does not provide a credential-level business allowlist or required row filters.
+A configured policy remains deny-by-default; malformed or empty-object JSON never falls back to
+automatic mode. Automatic mode resolves supported primitive fields and complete keys from V2/V4
+metadata, and honors SAP write flags. It does not infer business permissions from metadata.
+The node also:
 
 - requires HTTPS unless an isolated test credential explicitly enables HTTP;
 - blocks cross-origin/cross-collection pagination and continuation links that alter protected query parameters;

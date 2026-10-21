@@ -169,14 +169,17 @@ export function resolveNextLink(
 
 function jsonMediaType(credentials: ODataGuardCredentials, url: string): string {
 	const path = new URL(url).pathname;
-	const policies = JSON.parse(credentials.servicePoliciesJson) as Record<
+	const policies = JSON.parse(credentials.servicePoliciesJson?.trim() || '{}') as Record<
 		string,
 		{ version?: string }
 	>;
-	const isV4 = Object.entries(policies).some(
+	const versions = {
+		...Object.fromEntries(Object.entries(policies).map(([path, policy]) => [path, policy.version])),
+		...credentials.resolvedServiceVersions,
+	};
+	const isV4 = Object.entries(versions).some(
 		([service, policy]) =>
-			policy.version === 'v4' &&
-			(path === service || path.startsWith(`${service.replace(/\/$/, '')}/`)),
+			policy === 'v4' && (path === service || path.startsWith(`${service.replace(/\/$/, '')}/`)),
 	);
 	return isV4 ? 'application/json;IEEE754Compatible=true' : 'application/json';
 }
@@ -360,6 +363,28 @@ export function parseODataPage(payload: unknown): ODataPage {
 		};
 	}
 	return { items: [root], serializedBytes };
+}
+
+/** Probe the configured origin when there is no policy from which to choose a test service. */
+export async function requestHostConnection(
+	httpRequest: ODataHttpRequest,
+	credentials: ODataGuardCredentials,
+): Promise<void> {
+	const url = new URL(
+		normalizeHost(
+			credentials.host,
+			credentials.allowInsecureHttp === true,
+			credentials.allowPrivateNetwork === true,
+		),
+	);
+	addSapContext(url, credentials);
+	const response = await performRequest(
+		httpRequest,
+		requestOptions(url.toString(), credentials, false),
+		credentials,
+	);
+	if (byteLength(response) > credentials.maxResponseBytes)
+		throw new OperationalError('Host response exceeds the credential byte limit.');
 }
 
 export async function requestMetadata(
