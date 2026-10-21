@@ -369,7 +369,7 @@ export function parseODataPage(payload: unknown): ODataPage {
 export async function requestHostConnection(
 	httpRequest: ODataHttpRequest,
 	credentials: ODataGuardCredentials,
-): Promise<void> {
+): Promise<{ statusCode?: number }> {
 	const url = new URL(
 		normalizeHost(
 			credentials.host,
@@ -378,13 +378,24 @@ export async function requestHostConnection(
 		),
 	);
 	addSapContext(url, credentials);
-	const response = await performRequest(
-		httpRequest,
-		requestOptions(url.toString(), credentials, false),
-		credentials,
-	);
+	let response: unknown;
+	try {
+		response = await performRequest(
+			httpRequest,
+			requestOptions(url.toString(), credentials, false),
+			credentials,
+		);
+	} catch (error) {
+		// An unconfigured origin route is common on SAP. Its 404 proves only that
+		// the host responded; selected-service metadata still needs its own test.
+		if (error instanceof SapODataRequestError && error.statusCode === 404)
+			return { statusCode: 404 };
+		// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
+		throw error;
+	}
 	if (byteLength(response) > credentials.maxResponseBytes)
 		throw new OperationalError('Host response exceeds the credential byte limit.');
+	return {};
 }
 
 export async function requestMetadata(

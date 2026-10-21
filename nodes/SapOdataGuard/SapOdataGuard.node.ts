@@ -786,11 +786,11 @@ export class SapOdataGuard implements INodeType {
 							rejectUnauthorized: !options.skipSslCertificateValidation,
 						});
 					if (!service) {
-						await requestHostConnection(request, credentials);
+						const connection = await requestHostConnection(request, credentials);
 						return {
 							status: 'OK',
 							message:
-								'Host responded successfully. Run Connection → Test Connection in the node to verify the selected OData service.',
+								`Host is reachable${connection.statusCode === 404 ? ' (HTTP 404 at the root URL)' : ''}. Authentication and OData service access are not verified by this host-only check. Run Connection → Test Connection in the node to verify the selected OData service.`,
 						};
 					}
 					await requestMetadata(request, credentials, service.path, true);
