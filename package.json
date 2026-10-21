@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-sap-odata-guard",
-	"version": "0.4.0-beta.2",
+	"version": "0.4.0-beta.3",
 	"description": "Logali SAP OData Guard: SAP OData reads and writes with automatic metadata discovery and optional credential policies",
 	"license": "MIT",
 	"homepage": "https://github.com/EskadiaHQ/n8n-nodes-sap-odata-guard#readme",

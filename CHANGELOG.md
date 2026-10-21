@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.0-beta.3] - 2026-10-21
+
+### Fixed
+
+- Avoid a false credential connection failure when an SAP server returns HTTP 404 at its root
+  while Service Policies JSON is empty. Report host reachability separately from authentication
+  and selected-service verification. Configured-service metadata failures, HTTP 401/403, server
+  errors, DNS, TCP and TLS errors remain failures.
+
 ## [0.4.0-beta.2] - 2026-10-21
 
 ### Changed

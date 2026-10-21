@@ -3,7 +3,7 @@
 Security-first n8n community node for discovering visible SAP services and governing reads and
 writes through SAP OData V2 and V4.
 
-> Status: candidate `0.4.0-beta.2` for controlled, non-production evaluation.
+> Status: candidate `0.4.0-beta.3` for controlled, non-production evaluation.
 
 ## Why Guard?
 
@@ -17,9 +17,16 @@ For a restricted credential, fill **Service Policies JSON** with the exact subse
 may use. Existing policies remain authoritative and deny everything they do not list. Invalid
 JSON, `{}`, and incomplete policies are errors; they never activate automatic mode.
 
+With no policy, the credential dialog can check only the configured host: it does not know
+which service the workflow will select. A root URL returning HTTP 404 counts as a reachable
+host, with an explicit message that authentication and OData access have not been verified.
+Use **Connection → Test Connection** in the node to test the selected service's metadata.
+HTTP 401/403, server errors, DNS, TCP, and TLS failures still fail the credential check;
+a 404 from a configured service's metadata also remains an error.
+
 There are therefore two different limits:
 
-- **Implemented capability**: version `0.4.0-beta.2` implements service-catalog discovery, connection
+- **Implemented capability**: version `0.4.0-beta.3` implements service-catalog discovery, connection
   checks, metadata, Get, Get Many, Create, Update, and Delete. Policy JSON cannot unlock actions,
   batches, or triggers.
 - **Credential authorization**: a configured policy denies anything absent from it. An empty field
